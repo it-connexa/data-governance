@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv add:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Bash(snow:*)",
+      "Bash(duckdb:*)",
+      "Bash(security:*)",
+      "Bash(python -c:*)",
+      "Bash(uv run python -c:*)",
+      "Bash(uv run dq preview:*)",
+      "Bash(uv run dq run:*)",
+      "Bash(uv run dq export:*)",
+      "Read(~/dq-data/**)",
+      "Read(~/.dq/**)",
+      "Read(~/.snowflake/**)",
+      "Read(~/.ssh/**)",
+      "Edit(~/dq-data/**)",
+      "Edit(~/.dq/**)"
+    ]
+  }
+}

@@ -1,0 +1,74 @@
+# =====================================================================
+# Connexa Data Governance PoC — source definitions
+# ---------------------------------------------------------------------
+# Rule SQL never names Snowflake tables directly. It references logical
+# sources as {{ src.NAME }}, and the engine renders each one as a
+# filtered subquery, so the soft-delete filters can't be skipped:
+#
+#   FROM {{ src.SITE }} s
+#   -> FROM (SELECT <columns> FROM <DB>.<SCHEMA>.<TABLE>
+#            WHERE <default_filters> AND <filters>) s
+#
+# On migration to Snowflake, each entry becomes a real DQ_SRC view.
+# Fill in <PLACEHOLDERS> during setup step 1.
+#
+# record_label: plural noun used in headline totals
+#               ("of 1,546 sites, 45 exceptions").
+# =====================================================================
+
+snowflake:
+  database: <FIVETRAN_DB>
+  schema: <SALESFORCE_SCHEMA>
+
+# Applied to every source unless a source sets apply_default_filters: false
+default_filters:
+  - "COALESCE(_FIVETRAN_DELETED, FALSE) = FALSE"   # Fivetran soft deletes
+  - "COALESCE(IS_DELETED, FALSE) = FALSE"          # Salesforce recycle bin
+
+freshness_column: _FIVETRAN_SYNCED
+
+sources:
+
+  SITE:
+    table: <SITE_TABLE>
+    sf_object: <SITE_OBJECT_API_NAME>        # for record deep links
+    record_label: sites
+    description: Sitetracker site master (one row per cell site)
+    columns: ["*"]                           # replace with explicit list once confirmed
+    filters: []
+
+  PROJECT:
+    table: <PROJECT_TABLE>
+    sf_object: <PROJECT_OBJECT_API_NAME>
+    record_label: projects
+    description: Sitetracker projects (build, upgrade, decommission etc.); links to site and template
+    columns: ["*"]
+    filters: []
+
+  MILESTONE:
+    table: <MILESTONE_TABLE>
+    sf_object: <MILESTONE_OBJECT_API_NAME>
+    record_label: projects                   # one row per project; milestones are columns
+    item_label: milestones                   # default ITEM_LABEL for multi-item rules on this source
+    description: >
+      Wide milestone table: one row per project, 100+ milestones as forecast/actual
+      date column pairs. Rules unpivot the milestone columns they name, so findings
+      are per project per milestone (ITEM_KEY = milestone label).
+    columns: ["*"]
+    filters: []
+
+  PROJECT_TEMPLATE:
+    table: <PROJECT_TEMPLATE_TABLE>
+    sf_object: <PROJECT_TEMPLATE_OBJECT_API_NAME>
+    record_label: templates
+    description: Project templates; rules join on template name to scope milestone checks
+    columns: ["*"]
+    filters: []
+
+  EQUIPMENT:
+    table: <EQUIPMENT_TABLE>
+    sf_object: <EQUIPMENT_OBJECT_API_NAME>
+    record_label: equipment records
+    description: Equipment installed at sites (one-to-many from site); use EXISTS in rules
+    columns: ["*"]
+    filters: []
