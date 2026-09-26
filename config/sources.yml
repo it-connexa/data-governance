@@ -17,8 +17,8 @@
 # =====================================================================
 
 snowflake:
-  database: <FIVETRAN_DB>
-  schema: <SALESFORCE_SCHEMA>
+  database: RAW
+  schema: TMP
 
 # Applied to every source unless a source sets apply_default_filters: false
 default_filters:
@@ -30,7 +30,7 @@ freshness_column: _FIVETRAN_SYNCED
 sources:
 
   SITE:
-    table: <SITE_TABLE>
+    table: SITETRACKER_SITE_C
     sf_object: <SITE_OBJECT_API_NAME>        # for record deep links
     record_label: sites
     description: Sitetracker site master (one row per cell site)
@@ -38,15 +38,27 @@ sources:
     filters: []
 
   PROJECT:
-    table: <PROJECT_TABLE>
+    table: SITETRACKER_PROJECT_C
     sf_object: <PROJECT_OBJECT_API_NAME>
     record_label: projects
     description: Sitetracker projects (build, upgrade, decommission etc.); links to site and template
     columns: ["*"]
     filters: []
 
-  MILESTONE:
-    table: <MILESTONE_TABLE>
+  MILESTONE_EXT:
+    table: PROJECT_EXT_C
+    sf_object: <MILESTONE_OBJECT_API_NAME>
+    record_label: projects                   # one row per project; milestones are columns
+    item_label: milestones                   # default ITEM_LABEL for multi-item rules on this source
+    description: >
+      Wide milestone table: one row per project, 100+ milestones as forecast/actual
+      date column pairs. Rules unpivot the milestone columns they name, so findings
+      are per project per milestone (ITEM_KEY = milestone label).
+    columns: ["*"]
+    filters: []
+
+  MILESTONE_EXT_2:
+    table: PROJECT_EXT_2_C
     sf_object: <MILESTONE_OBJECT_API_NAME>
     record_label: projects                   # one row per project; milestones are columns
     item_label: milestones                   # default ITEM_LABEL for multi-item rules on this source
@@ -58,17 +70,10 @@ sources:
     filters: []
 
   PROJECT_TEMPLATE:
-    table: <PROJECT_TEMPLATE_TABLE>
+    table: SITETRACKER_PROJECT_TEMPLATE_C 
     sf_object: <PROJECT_TEMPLATE_OBJECT_API_NAME>
     record_label: templates
     description: Project templates; rules join on template name to scope milestone checks
     columns: ["*"]
     filters: []
 
-  EQUIPMENT:
-    table: <EQUIPMENT_TABLE>
-    sf_object: <EQUIPMENT_OBJECT_API_NAME>
-    record_label: equipment records
-    description: Equipment installed at sites (one-to-many from site); use EXISTS in rules
-    columns: ["*"]
-    filters: []
