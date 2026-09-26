@@ -152,3 +152,15 @@ def test_snowflake_executor_count_object_returns_scalar(settings, monkeypatch):
     count = executor.count_object("SITE", "SELECT COUNT(*) FROM x", query_tag="dq_poc:run:1")
 
     assert count == 1546
+
+
+def test_snowflake_executor_scalar_returns_arbitrary_value(settings, monkeypatch):
+    import datetime as dt
+
+    freshness_table = pa.table({"MAX": pa.array([dt.datetime(2026, 9, 27, 3, 0, 0)])})
+    client, _, _ = make_client(settings, freshness_table, monkeypatch)
+    executor = SnowflakeExecutor(client)
+
+    value = executor.scalar("SITE", "SELECT MAX(_FIVETRAN_SYNCED) FROM x", query_tag="dq_poc:run:1")
+
+    assert value == dt.datetime(2026, 9, 27, 3, 0, 0)

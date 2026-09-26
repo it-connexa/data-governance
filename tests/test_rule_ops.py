@@ -283,3 +283,86 @@ def test_clarify_unknown_rule_raises(store_path):
 
     with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
         rule_ops.clarify_rule(store, "NOPE-999", "question?")
+
+
+# --- dq rule confirm / approve -----------------------------------------------------
+
+
+def insert_owner(store_path, *, email: str, is_approver: bool) -> None:
+    con = duckdb.connect(str(store_path))
+    try:
+        con.execute(
+            "INSERT INTO DQ_OWNER (OWNER_EMAIL, DISPLAY_NAME, IS_APPROVER) VALUES (?, ?, ?)",
+            [email, email, is_approver],
+        )
+    finally:
+        con.close()
+
+
+def test_confirm_rule_moves_compiled_to_owner_confirmed(store_path):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status="COMPILED")
+    store = DuckDBStore(store_path)
+
+    updated = rule_ops.confirm_rule(store, "SITE-900", confirmed_by="kevin@connexa.co.nz")
+
+    assert updated["STATUS"] == "OWNER_CONFIRMED"
+    assert updated["OWNER_CONFIRMED_BY"] == "kevin@connexa.co.nz"
+
+
+def test_confirm_rule_rejects_wrong_starting_status(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="DRAFT")
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="not COMPILED"):
+        rule_ops.confirm_rule(store, "SITE-900", confirmed_by="kevin@connexa.co.nz")
+
+
+def test_confirm_rule_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.confirm_rule(store, "NOPE-999", confirmed_by="kevin@connexa.co.nz")
+
+
+def test_approve_rule_moves_owner_confirmed_to_active(store_path):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status="OWNER_CONFIRMED")
+    insert_owner(store_path, email="kevin@connexa.co.nz", is_approver=True)
+    store = DuckDBStore(store_path)
+
+    updated = rule_ops.approve_rule(store, "SITE-900", approved_by="kevin@connexa.co.nz")
+
+    assert updated["STATUS"] == "ACTIVE"
+    assert updated["SQL_APPROVED_BY"] == "kevin@connexa.co.nz"
+
+
+def test_approve_rule_rejects_wrong_starting_status(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="COMPILED")
+    insert_owner(store_path, email="kevin@connexa.co.nz", is_approver=True)
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="not OWNER_CONFIRMED"):
+        rule_ops.approve_rule(store, "SITE-900", approved_by="kevin@connexa.co.nz")
+
+
+def test_approve_rule_rejects_non_approver(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="OWNER_CONFIRMED")
+    insert_owner(store_path, email="jane@connexa.co.nz", is_approver=False)
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="not an approver"):
+        rule_ops.approve_rule(store, "SITE-900", approved_by="jane@connexa.co.nz")
+
+
+def test_approve_rule_rejects_unknown_owner(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="OWNER_CONFIRMED")
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="not an approver"):
+        rule_ops.approve_rule(store, "SITE-900", approved_by="ghost@connexa.co.nz")
+
+
+def test_approve_rule_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.approve_rule(store, "NOPE-999", approved_by="kevin@connexa.co.nz")

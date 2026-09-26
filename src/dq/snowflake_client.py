@@ -72,3 +72,7 @@ class SnowflakeExecutor:
     def count_object(self, target_object: str, sql: str, *, query_tag: str) -> int:
         result = self._client.execute(sql, query_tag=query_tag)
         return result.table.column(0)[0].as_py()
+
+    def scalar(self, label: str, sql: str, *, query_tag: str) -> Any:
+        result = self._client.execute(sql, query_tag=query_tag)
+        return result.table.column(0)[0].as_py()

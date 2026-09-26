@@ -164,3 +164,31 @@ def clarify_rule(
     if rule is None:
         raise RuleOpsError(f"Unknown rule code: {rule_code}")
     return store.set_rule_clarification(rule_code, question, changed_by=changed_by)
+
+
+def confirm_rule(store: GovernanceStore, rule_code: str, *, confirmed_by: str) -> dict[str, Any]:
+    """COMPILED -> OWNER_CONFIRMED: the owner has looked at a preview of the
+    actual failing records and agrees the rule means what they intended
+    (brief §10.2, Streamlit page 2's "Yes, this is what I meant")."""
+    rule = store.get_rule(rule_code)
+    if rule is None:
+        raise RuleOpsError(f"Unknown rule code: {rule_code}")
+    if rule["STATUS"] != "COMPILED":
+        raise RuleOpsError(f"{rule_code} is {rule['STATUS']}, not COMPILED -- can't confirm")
+    return store.confirm_rule(rule_code, confirmed_by=confirmed_by)
+
+
+def approve_rule(store: GovernanceStore, rule_code: str, *, approved_by: str) -> dict[str, Any]:
+    """OWNER_CONFIRMED -> ACTIVE: an approver has reviewed the SQL itself
+    (brief §10.2, Streamlit page 3, approvers only)."""
+    rule = store.get_rule(rule_code)
+    if rule is None:
+        raise RuleOpsError(f"Unknown rule code: {rule_code}")
+    if rule["STATUS"] != "OWNER_CONFIRMED":
+        raise RuleOpsError(f"{rule_code} is {rule['STATUS']}, not OWNER_CONFIRMED -- can't approve")
+
+    owner = store.get_owner(approved_by)
+    if owner is None or not owner["IS_APPROVER"]:
+        raise RuleOpsError(f"{approved_by} is not an approver")
+
+    return store.approve_rule(rule_code, approved_by=approved_by)

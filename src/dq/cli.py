@@ -8,16 +8,18 @@ nothing here hardcodes a path or a credential.
 
 from __future__ import annotations
 
+import getpass
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
 
-from dq import catalogue, rule_ops
+from dq import catalogue, engine, rule_ops
 from dq.engine import EngineConfig
-from dq.settings import load_settings
+from dq.settings import SettingsError, load_settings
 from dq.snowflake_client import SnowflakeClient, SnowflakeExecutor
 from dq.sources import SourcesConfig, load_sources
 from dq.store.base import GovernanceStore
@@ -37,14 +39,20 @@ def _print_json(data: object) -> None:
 
 
 def _load_store_and_sources() -> tuple[GovernanceStore, SourcesConfig]:
-    settings = load_settings()
-    store = DuckDBStore(settings.paths.duckdb)
-    sources_config = load_sources(settings.paths.sources)
+    try:
+        settings = load_settings()
+        store = DuckDBStore(settings.paths.duckdb)
+        sources_config = load_sources(settings.paths.sources)
+    except SettingsError as exc:
+        _fail(str(exc))
     return store, sources_config
 
 
 def _make_executor() -> SnowflakeExecutor:
-    settings = load_settings()
+    try:
+        settings = load_settings()
+    except SettingsError as exc:
+        _fail(str(exc))
     return SnowflakeExecutor(SnowflakeClient(settings))
 
 
@@ -167,6 +175,35 @@ def rule_clarify(
     _print_json(updated)
 
 
+@rule_app.command("confirm")
+def rule_confirm(
+    code: str,
+    as_: Annotated[str, typer.Option("--as", help="Owner email confirming this rule")],
+) -> None:
+    """COMPILED -> OWNER_CONFIRMED: the owner has previewed the actual
+    failing records and agrees the rule means what they intended."""
+    store, _ = _load_store_and_sources()
+    try:
+        updated = rule_ops.confirm_rule(store, code, confirmed_by=as_)
+    except rule_ops.RuleOpsError as exc:
+        _fail(str(exc))
+    _print_json(updated)
+
+
+@rule_app.command("approve")
+def rule_approve(
+    code: str,
+    as_: Annotated[str, typer.Option("--as", help="Approver email (must have IS_APPROVER)")],
+) -> None:
+    """OWNER_CONFIRMED -> ACTIVE: an approver has reviewed the SQL itself."""
+    store, _ = _load_store_and_sources()
+    try:
+        updated = rule_ops.approve_rule(store, code, approved_by=as_)
+    except rule_ops.RuleOpsError as exc:
+        _fail(str(exc))
+    _print_json(updated)
+
+
 # --- dq validate -------------------------------------------------------------------
 
 
@@ -184,4 +221,49 @@ def validate(code: str) -> None:
         _fail(str(exc))
     _print_json(result)
     if not result["ok"]:
+        raise typer.Exit(code=1)
+
+
+# --- dq run ------------------------------------------------------------------------
+
+
+@app.command("run")
+def run(
+    manual: Annotated[
+        bool, typer.Option("--manual", help="Mark this as a manually triggered run")
+    ] = False,
+) -> None:
+    """Full engine run (brief §10.1): render, lint, execute and validate
+    every ACTIVE rule, apply the finding lifecycle, score sites and write
+    object rollups. Writes the governance store; never prints row data."""
+    store, sources_config = _load_store_and_sources()
+    executor = _make_executor()
+    config = _engine_config(store)
+    query_tag = _query_tag("run")
+
+    freshness = engine.collect_source_freshness(executor, sources_config, query_tag=query_tag)
+
+    summary = engine.run(
+        store=store,
+        executor=executor,
+        sources_config=sources_config,
+        config=config,
+        run_id=str(uuid.uuid4()),
+        run_type="MANUAL" if manual else "SCHEDULED",
+        triggered_by=getpass.getuser(),
+        started_at=datetime.now(UTC),
+        source_freshness=freshness,
+    )
+
+    _print_json(
+        {
+            "run_id": summary.run_id,
+            "status": summary.status,
+            "rules_attempted": summary.rules_attempted,
+            "rules_succeeded": summary.rules_succeeded,
+            "rules_errored": summary.rules_errored,
+            "errors": summary.errors,
+        }
+    )
+    if summary.status != "SUCCEEDED":
         raise typer.Exit(code=1)

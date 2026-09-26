@@ -19,12 +19,16 @@ runner = CliRunner()
 class FakeExecutor:
     def __init__(self):
         self.rule_tables: dict[str, pa.Table] = {}
+        self.object_totals: dict[str, int] = {}
 
     def execute_rule(self, rule_code, sql, *, query_tag, timeout_seconds):
         return ExecutionResult(table=self.rule_tables[rule_code], query_id="fake", duration_ms=1)
 
     def count_object(self, target_object, sql, *, query_tag):
-        raise NotImplementedError
+        return self.object_totals.get(target_object, 0)
+
+    def scalar(self, label, sql, *, query_tag):
+        return None
 
 
 def make_table(rows: list[tuple[str, bool]]) -> pa.Table:
@@ -118,6 +122,21 @@ def test_rule_show_unknown_code_exits_nonzero(store_path):
     assert "error" in json.loads(result.output)
 
 
+def test_missing_settings_file_is_a_clean_json_error(monkeypatch, tmp_path):
+    from dq.settings import SettingsError
+
+    def raise_missing():
+        raise SettingsError(f"Settings file not found: {tmp_path / '.dq' / 'settings.toml'}")
+
+    monkeypatch.setattr(cli, "load_settings", raise_missing)
+
+    result = runner.invoke(cli.app, ["rule", "list"])
+
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    assert "Settings file not found" in body["error"]
+
+
 def test_rule_clarify(store_path):
     insert_rule(store_path, rule_code="SITE-900")
 
@@ -129,6 +148,47 @@ def test_rule_clarify(store_path):
     body = json.loads(result.output)
     assert body["STATUS"] == "NEEDS_CLARIFICATION"
     assert body["CLARIFICATION_QUESTION"] == "What is active?"
+
+
+def test_rule_confirm_and_approve(store_path):
+    con = duckdb.connect(str(store_path))
+    try:
+        con.execute(
+            "INSERT INTO DQ_OWNER (OWNER_EMAIL, DISPLAY_NAME, IS_APPROVER) VALUES (?, ?, ?)",
+            ["kevin@connexa.co.nz", "Kevin", True],
+        )
+    finally:
+        con.close()
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status="COMPILED")
+
+    confirmed = runner.invoke(
+        cli.app, ["rule", "confirm", "SITE-900", "--as", "kevin@connexa.co.nz"]
+    )
+    assert confirmed.exit_code == 0
+    assert json.loads(confirmed.output)["STATUS"] == "OWNER_CONFIRMED"
+
+    approved = runner.invoke(
+        cli.app, ["rule", "approve", "SITE-900", "--as", "kevin@connexa.co.nz"]
+    )
+    assert approved.exit_code == 0
+    assert json.loads(approved.output)["STATUS"] == "ACTIVE"
+
+
+def test_rule_approve_rejects_non_approver(store_path):
+    con = duckdb.connect(str(store_path))
+    try:
+        con.execute(
+            "INSERT INTO DQ_OWNER (OWNER_EMAIL, DISPLAY_NAME, IS_APPROVER) VALUES (?, ?, ?)",
+            ["jane@connexa.co.nz", "Jane", False],
+        )
+    finally:
+        con.close()
+    insert_rule(store_path, rule_code="SITE-900", status="OWNER_CONFIRMED")
+
+    result = runner.invoke(cli.app, ["rule", "approve", "SITE-900", "--as", "jane@connexa.co.nz"])
+
+    assert result.exit_code == 1
+    assert "not an approver" in json.loads(result.output)["error"]
 
 
 # --- dq catalogue show (no Snowflake needed) -----------------------------------
@@ -208,3 +268,44 @@ def test_rule_set_sql_lint_failure_exits_nonzero(store_path, patch_executor, tmp
     body = json.loads(result.output)
     assert body["ok"] is False
     assert body["stage"] == "lint"
+
+
+# --- dq run ------------------------------------------------------------------------
+
+
+def test_run_succeeds_with_one_active_rule(store_path, patch_executor):
+    insert_rule(
+        store_path,
+        rule_code="SITE-900",
+        check_sql="SELECT s.ID FROM {{ src.SITE }} s",
+        status="ACTIVE",
+    )
+    patch_executor.rule_tables["SITE-900"] = make_table([("r1", True), ("r2", False)])
+    patch_executor.object_totals["SITE"] = 2
+
+    result = runner.invoke(cli.app, ["run", "--manual"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    assert body["status"] == "SUCCEEDED"
+    assert body["rules_attempted"] == 1
+    assert body["rules_succeeded"] == 1
+
+    con = duckdb.connect(str(store_path))
+    run_row = con.execute(
+        "SELECT RUN_TYPE, STATUS, RULES_SUCCEEDED FROM DQ_RUN WHERE RUN_ID = ?", [body["run_id"]]
+    ).fetchone()
+    finding = con.execute("SELECT STATUS FROM DQ_FINDING WHERE RECORD_ID = 'r2'").fetchone()
+    con.close()
+
+    assert run_row == ("MANUAL", "SUCCEEDED", 1)
+    assert finding == ("OPEN",)
+
+
+def test_run_with_no_active_rules_still_succeeds(store_path, patch_executor):
+    result = runner.invoke(cli.app, ["run"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    assert body["status"] == "SUCCEEDED"
+    assert body["rules_attempted"] == 0

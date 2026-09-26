@@ -696,3 +696,66 @@ class DuckDBStore:
             changed_by=changed_by,
         )
         return updated
+
+    def confirm_rule(self, rule_code: str, *, confirmed_by: str) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET STATUS = 'OWNER_CONFIRMED', OWNER_CONFIRMED_BY = ?,
+                    OWNER_CONFIRMED_AT = current_timestamp,
+                    UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [confirmed_by, confirmed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="OWNER_CONFIRMED",
+            status_after="OWNER_CONFIRMED",
+            snapshot=updated,
+            changed_by=confirmed_by,
+        )
+        return updated
+
+    def approve_rule(self, rule_code: str, *, approved_by: str) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET STATUS = 'ACTIVE', SQL_APPROVED_BY = ?, SQL_APPROVED_AT = current_timestamp,
+                    UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [approved_by, approved_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="APPROVED",
+            status_after="ACTIVE",
+            snapshot=updated,
+            changed_by=approved_by,
+        )
+        return updated
+
+    def get_owner(self, owner_email: str) -> dict[str, Any] | None:
+        with self._connect() as con:
+            cur = con.execute("SELECT * FROM DQ_OWNER WHERE OWNER_EMAIL = ?", [owner_email])
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return _rows_to_dicts(cur, [row])[0]

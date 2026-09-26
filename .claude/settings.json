@@ -13,6 +13,8 @@
       "Bash(uv run dq rule show:*)",
       "Bash(uv run dq rule set-sql:*)",
       "Bash(uv run dq rule clarify:*)",
+      "Bash(uv run dq rule confirm:*)",
+      "Bash(uv run dq rule approve:*)",
       "Bash(uv run dq validate:*)"
     ],
     "deny": [

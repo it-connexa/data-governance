@@ -31,6 +31,7 @@ class FakeExecutor:
         self.rule_tables: dict[str, pa.Table] = {}
         self.rule_errors: dict[str, Exception] = {}
         self.object_totals: dict[str, int] = {}
+        self.scalars: dict[str, object] = {}
         self.calls: list[str] = []
 
     def execute_rule(self, rule_code, sql, *, query_tag, timeout_seconds):
@@ -43,6 +44,9 @@ class FakeExecutor:
 
     def count_object(self, target_object, sql, *, query_tag):
         return self.object_totals.get(target_object, 0)
+
+    def scalar(self, label, sql, *, query_tag):
+        return self.scalars.get(label)
 
 
 def make_table(rows: list[tuple[str, bool]]) -> pa.Table:
@@ -327,3 +331,26 @@ def test_no_active_rules_still_completes(store_path, sources_config):
 
     assert summary.status == "SUCCEEDED"
     assert summary.rules_attempted == 0
+
+
+# --- collect_source_freshness ----------------------------------------------------
+
+
+def test_collect_source_freshness_returns_max_per_source(sources_config):
+    executor = FakeExecutor()
+    executor.scalars["SITE"] = T2
+    executor.scalars["PROJECT"] = T1
+
+    freshness = engine.collect_source_freshness(executor, sources_config, query_tag="dq_poc:run:1")
+
+    assert freshness["SITE"] == T2
+    assert freshness["PROJECT"] == T1
+    assert freshness["NO_DEFAULT_FILTERS"] is None  # nothing configured for it
+
+
+def test_collect_source_freshness_renders_all_sources(sources_config):
+    executor = FakeExecutor()
+
+    freshness = engine.collect_source_freshness(executor, sources_config, query_tag="dq_poc:run:1")
+
+    assert set(freshness) == set(sources_config.sources)

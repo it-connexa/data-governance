@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import pyarrow as pa
@@ -38,6 +38,8 @@ class RuleExecutor(Protocol):
     ) -> ExecutionResult: ...
 
     def count_object(self, target_object: str, sql: str, *, query_tag: str) -> int: ...
+
+    def scalar(self, label: str, sql: str, *, query_tag: str) -> Any: ...
 
 
 class RuleRunError(Exception):
@@ -91,7 +93,7 @@ def run(
         store.finish_run(
             run_id,
             status="FAILED",
-            finished_at=finished_at or started_at,
+            finished_at=finished_at or datetime.now(UTC),
             rules_attempted=0,
             rules_succeeded=0,
             rules_errored=0,
@@ -110,7 +112,7 @@ def run(
     store.finish_run(
         run_id,
         status=summary.status,
-        finished_at=finished_at or started_at,
+        finished_at=finished_at or datetime.now(UTC),
         rules_attempted=summary.rules_attempted,
         rules_succeeded=summary.rules_succeeded,
         rules_errored=summary.rules_errored,
@@ -210,6 +212,20 @@ def _count_object(
 ) -> int:
     sql = render(f"SELECT COUNT(*) FROM {{{{ src.{target} }}}}", sources_config)
     return executor.count_object(target, sql, query_tag=query_tag)
+
+
+def collect_source_freshness(
+    executor: RuleExecutor, sources_config: SourcesConfig, *, query_tag: str
+) -> dict[str, datetime | None]:
+    """MAX(freshness_column) per source (brief §10.1 step 1)."""
+    freshness: dict[str, datetime | None] = {}
+    for name in sources_config.sources:
+        sql = render(
+            f"SELECT MAX({sources_config.freshness_column}) FROM {{{{ src.{name} }}}}",
+            sources_config,
+        )
+        freshness[name] = executor.scalar(name, sql, query_tag=query_tag)
+    return freshness
 
 
 def _run_one_rule(
