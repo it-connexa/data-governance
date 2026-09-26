@@ -29,8 +29,8 @@ Local-first PoC that turns plain-English data governance rules into deterministi
 
 ## Status
 
-- [ ] Step 1 — Scaffold, settings, secrets, Snowflake client (connectivity after SETUP.md step 5)
-- [ ] Step 2 — Renderer + linter, contract
+- [~] Step 1 — Scaffold + settings loader done (`pyproject.toml`, `src/dq/settings.py`); `secrets.py`/`snowflake_client.py` and connectivity still pending SETUP.md
+- [~] Step 2 — Renderer + linter (`src/dq/sources.py`, sqlglot-based) and contract/result validator (`src/dq/contract.py`) done, test-first, `uv run pytest` (54 passed) and `uv run ruff check` clean
 - [ ] Step 3 — Catalogue labels, validate, rule set-sql / clarify, `/compile-rules`
 - [ ] Step 4 — Lifecycle + engine (FakeExecutor tests)
 - [ ] Step 5 — Totals, rollups, scoring

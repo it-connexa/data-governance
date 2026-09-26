@@ -1,0 +1,19 @@
+# Template for ~/.dq/settings.toml (docs/SETUP.md step 9).
+# Copy this file to ~/.dq/settings.toml, fill in real values, then:
+#   chmod 600 ~/.dq/settings.toml
+# Never commit the real file — it names the Snowflake account and Keychain
+# entry, even though the private key itself stays in Keychain.
+
+[snowflake]
+account          = "<ACCOUNT_IDENTIFIER>"
+user             = "DQ_POC_SVC"
+role             = "DQ_POC_READER"
+warehouse        = "DQ_POC_WH"
+keychain_service = "dq-snowflake-key"
+keychain_account = "dq_poc"
+
+[paths]
+duckdb  = "~/dq-data/governance.duckdb"
+sources = "<repo>/config/sources.yml"
+export  = "<EXPORT_PATH>"
+backups = "~/dq-data/backups"

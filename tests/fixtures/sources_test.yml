@@ -1,0 +1,39 @@
+# Synthetic sources.yml for tests only. Fake db/schema/table names —
+# never point tests at the real config/sources.yml (which still has
+# <PLACEHOLDER> values pending docs/SETUP.md).
+
+snowflake:
+  database: TESTDB
+  schema: TESTSCHEMA
+
+default_filters:
+  - "COALESCE(_FIVETRAN_DELETED, FALSE) = FALSE"
+  - "COALESCE(IS_DELETED, FALSE) = FALSE"
+
+freshness_column: _FIVETRAN_SYNCED
+
+sources:
+  SITE:
+    table: SITE__C
+    sf_object: Site__c
+    record_label: sites
+    description: Test site source
+    columns: ["*"]
+    filters: []
+
+  PROJECT:
+    table: PROJECT__C
+    sf_object: Project__c
+    record_label: projects
+    description: Test project source
+    columns: ["ID", "NAME", "STATUS__C"]
+    filters: ["STATUS__C IS NOT NULL"]
+
+  NO_DEFAULT_FILTERS:
+    table: LEGACY__C
+    sf_object: Legacy__c
+    record_label: legacy records
+    description: A source without Fivetran/Salesforce delete columns
+    columns: ["*"]
+    filters: ["ARCHIVED__C = FALSE"]
+    apply_default_filters: false
