@@ -759,3 +759,234 @@ class DuckDBStore:
             if row is None:
                 return None
             return _rows_to_dicts(cur, [row])[0]
+
+    def list_owners(self) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute("SELECT * FROM DQ_OWNER WHERE IS_ACTIVE ORDER BY DISPLAY_NAME")
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def create_rule(
+        self,
+        *,
+        prefix: str,
+        rule_name: str,
+        statement: str,
+        domain: str,
+        target_object: str,
+        scope: str,
+        dimension: str,
+        severity: str,
+        owner_email: str,
+        record_label: str = "records",
+        item_label: str | None = None,
+        created_by: str,
+        facilitated_by: str | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT RULE_CODE FROM DQ_RULE WHERE RULE_CODE LIKE ? "
+                "ORDER BY RULE_CODE DESC LIMIT 1",
+                [f"{prefix}-%"],
+            ).fetchone()
+            next_n = 1
+            if row:
+                try:
+                    next_n = int(row[0].rsplit("-", 1)[-1]) + 1
+                except ValueError:
+                    next_n = 1
+            rule_code = f"{prefix}-{next_n:03d}"
+
+            con.execute(
+                """
+                INSERT INTO DQ_RULE (
+                    RULE_CODE, RULE_NAME, RULE_STATEMENT, DOMAIN, TARGET_OBJECT,
+                    RECORD_LABEL, ITEM_LABEL, SCOPE, DIMENSION, SEVERITY, OWNER_EMAIL,
+                    STATUS, CREATED_BY
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?)
+                """,
+                [
+                    rule_code,
+                    rule_name,
+                    statement,
+                    domain,
+                    target_object,
+                    record_label,
+                    item_label,
+                    scope,
+                    dimension,
+                    severity,
+                    owner_email,
+                    created_by,
+                ],
+            )
+
+        created = self.get_rule(rule_code)
+        if created is None:
+            raise ValueError(f"Failed to create rule {rule_code}")
+
+        self.add_history(
+            rule_id=created["RULE_ID"],
+            rule_code=rule_code,
+            version=created["VERSION"],
+            change_type="CREATED",
+            status_after="DRAFT",
+            snapshot=created,
+            changed_by=created_by,
+            facilitated_by=facilitated_by,
+        )
+        return created
+
+    def update_rule(
+        self,
+        rule_code: str,
+        *,
+        fields: dict[str, Any],
+        changed_by: str,
+        facilitated_by: str | None = None,
+    ) -> dict[str, Any]:
+        set_clauses: list[str] = []
+        params: list[Any] = []
+        for key, value in fields.items():
+            set_clauses.append(f"{key} = ?")
+            params.append(value)
+
+        if "RULE_STATEMENT" in fields:
+            # Brief §10.6: editing the statement resets a compiled-or-later
+            # rule back to DRAFT and clears everything downstream of it.
+            reset_fields = {
+                "STATUS": "DRAFT",
+                "CHECK_SQL": None,
+                "CHECK_SQL_GENERATED_BY": None,
+                "CHECK_SQL_GENERATED_AT": None,
+                "VALIDATION_RESULT": None,
+                "CLARIFICATION_QUESTION": None,
+                "CLARIFICATION_ANSWER": None,
+                "OWNER_CONFIRMED_BY": None,
+                "OWNER_CONFIRMED_AT": None,
+                "SQL_APPROVED_BY": None,
+                "SQL_APPROVED_AT": None,
+            }
+            for key, value in reset_fields.items():
+                if key not in fields:
+                    set_clauses.append(f"{key} = ?")
+                    params.append(value)
+            set_clauses.append("VERSION = VERSION + 1")
+
+        set_clauses += ["UPDATED_BY = ?", "UPDATED_AT = current_timestamp"]
+        params.append(changed_by)
+        params.append(rule_code)
+
+        with self._connect() as con:
+            con.execute(f"UPDATE DQ_RULE SET {', '.join(set_clauses)} WHERE RULE_CODE = ?", params)
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="STATEMENT_EDITED",
+            status_after=updated["STATUS"],
+            snapshot=updated,
+            changed_by=changed_by,
+            facilitated_by=facilitated_by,
+        )
+        return updated
+
+    def answer_clarification(
+        self, rule_code: str, answer: str, *, changed_by: str, facilitated_by: str | None = None
+    ) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET CLARIFICATION_ANSWER = ?, UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [answer, changed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="CLARIFICATION",
+            status_after=updated["STATUS"],
+            snapshot=updated,
+            changed_by=changed_by,
+            facilitated_by=facilitated_by,
+        )
+        return updated
+
+    def reject_confirmation(
+        self, rule_code: str, comment: str, *, changed_by: str, facilitated_by: str | None = None
+    ) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET STATUS = 'DRAFT', UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [changed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="OWNER_REJECTED",
+            status_after="DRAFT",
+            snapshot=updated,
+            changed_by=changed_by,
+            facilitated_by=facilitated_by,
+            comment=comment,
+        )
+        return updated
+
+    def record_preview(
+        self,
+        rule_code: str,
+        *,
+        evaluated: int,
+        failed: int,
+        changed_by: str,
+        facilitated_by: str | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET PREVIEW_EVALUATED_COUNT = ?, PREVIEW_FAILED_COUNT = ?,
+                    PREVIEW_AT = current_timestamp,
+                    UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [evaluated, failed, changed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="PREVIEWED",
+            status_after=updated["STATUS"],
+            snapshot=updated,
+            changed_by=changed_by,
+            facilitated_by=facilitated_by,
+        )
+        return updated

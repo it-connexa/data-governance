@@ -11,6 +11,10 @@ Local-first PoC that turns plain-English data governance rules into deterministi
 - Use `DQ_TEST` data, synthetic fixtures and the `FakeExecutor` for anything that needs rows.
 - If a task seems to need production rows or credentials, stop and ask.
 
+## Known gaps
+
+- `.claude/settings.json` denies `Bash(uv run dq app:*)`, but not the underlying `streamlit run`/`uv run streamlit` command directly. Left open deliberately so Claude Code can verify Streamlit UI changes itself (always against a disposable temp store via `DQ_SETTINGS_PATH`, never real settings/`~/dq-data`) — see `docs/adr/0002-streamlit-verification-path.md`. Revisit before handover to the AI Solutions Specialist: either close the gap with an explicit deny, or confirm it's acceptable long-term.
+
 ## Working agreement
 
 - Work through brief §15 one step at a time. Propose a plan, wait for approval, implement test-first, run `uv run pytest` and `uv run ruff check`, then summarise and **stop for review** before the next step.
@@ -34,7 +38,7 @@ Local-first PoC that turns plain-English data governance rules into deterministi
 - [x] Step 3 — `src/dq/catalogue.py`, `src/dq/rule_ops.py` (validate/set-sql/clarify/confirm/approve), full `dq` CLI wiring, `.claude/settings.json` allow/deny per brief §7, `.claude/commands/compile-rules.md`. `config/sources.yml` has real SITE/PROJECT tables. **SITE-004 and PRJ-002 are `ACTIVE`** — compiled and validated against live Snowflake via `dq rule set-sql` (3,346 sites/76 flagged; 579 projects/4 flagged), then `dq rule confirm`/`dq rule approve` (both run as `kevin.ross@connexa.co.nz`, without an actual owner preview of the failing rows first — a deliberate shortcut Kevin asked for, not the full brief §10.6 page-2 flow)
 - [x] Step 4 — Lifecycle (`src/dq/lifecycle.py`), `src/dq/store/` (`GovernanceStore` protocol + DuckDB implementation), and `src/dq/engine.py` (run orchestration behind a `RuleExecutor` protocol, FakeExecutor-tested per brief §11) all done, test-first. `dq run` CLI wrapper built (`src/dq/cli.py`), deny-listed for Claude Code as brief requires — Kevin runs it himself
 - [x] Step 5 — Totals, rollups, scoring (`src/dq/scoring.py`), wired into the engine's per-run object rollups and site scores. All Snowflake-free work so far: 187 passed, `uv run ruff check` clean
-- [ ] Step 6 — Streamlit app (deliberately paused on this — see working notes: wanted one real `dq run` first so the governance tables have real data before building a UI around them)
+- [~] Step 6 — Streamlit app: pages 1 (My rules — view/edit/add) and 2 (Rule detail — clarification Q&A, compiled SQL, preview with real sample rows, confirm/reject, a minimal approve folded in from page 3) built and verified live in the browser against a disposable temp store (never `~/dq-data`). New backend: `create_rule`/`update_rule`/`answer_clarification`/`reject_confirmation`/`preview_rule` (`src/dq/rule_ops.py` + store). `dq app` stays deny-listed for Claude Code; running the raw `streamlit run` command directly isn't currently blocked the same way (flagged to Kevin, not yet resolved). Pages 5 (run results/narratives), 4 (findings/dispositions) and full page 3 (SQL diff) still to do
 - [ ] Step 7 — Export + SharePoint
 - [ ] Step 8 — Narratives
 - [ ] Step 9 — Owner sessions + weekly runs

@@ -226,3 +226,142 @@ def test_set_rule_clarification_sets_status_and_question(store_path):
     ).fetchone()
     con.close()
     assert history == ("CLARIFICATION", "NEEDS_CLARIFICATION")
+
+
+# --- create_rule / update_rule / answer_clarification / reject_confirmation / preview -------
+
+
+def test_create_rule_generates_first_code_for_new_prefix(store_path):
+    store = DuckDBStore(store_path)
+
+    created = store.create_rule(
+        prefix="EQP",
+        rule_name="Test rule",
+        statement="Every widget must be blue.",
+        domain="SITE_MASTER",
+        target_object="EQUIPMENT",
+        scope="SITE",
+        dimension="VALIDITY",
+        severity="LOW",
+        owner_email="owner@connexa.co.nz",
+        created_by="kevin@connexa.co.nz",
+    )
+
+    assert created["RULE_CODE"] == "EQP-001"
+    assert created["STATUS"] == "DRAFT"
+    assert created["RULE_NAME"] == "Test rule"
+
+
+def test_create_rule_increments_existing_prefix(store_path):
+    # The schema seeds SITE-001..SITE-007 already.
+    store = DuckDBStore(store_path)
+
+    created = store.create_rule(
+        prefix="SITE",
+        rule_name="Another site rule",
+        statement="Statement.",
+        domain="SITE_MASTER",
+        target_object="SITE",
+        scope="SITE",
+        dimension="VALIDITY",
+        severity="LOW",
+        owner_email="owner@connexa.co.nz",
+        created_by="kevin@connexa.co.nz",
+    )
+
+    assert created["RULE_CODE"] == "SITE-008"
+
+
+def test_update_rule_statement_resets_compiled_rule_to_draft(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="COMPILED")
+    con = duckdb.connect(str(store_path))
+    con.execute(
+        "UPDATE DQ_RULE SET CHECK_SQL = 'SELECT 1', VERSION = 2, "
+        "OWNER_CONFIRMED_BY = 'x', SQL_APPROVED_BY = 'y' WHERE RULE_CODE = 'SITE-900'"
+    )
+    con.close()
+    store = DuckDBStore(store_path)
+
+    updated = store.update_rule(
+        "SITE-900", fields={"RULE_STATEMENT": "New statement"}, changed_by="kevin@connexa.co.nz"
+    )
+
+    assert updated["RULE_STATEMENT"] == "New statement"
+    assert updated["STATUS"] == "DRAFT"
+    assert updated["CHECK_SQL"] is None
+    assert updated["OWNER_CONFIRMED_BY"] is None
+    assert updated["SQL_APPROVED_BY"] is None
+    assert updated["VERSION"] == 3
+
+
+def test_update_rule_metadata_only_does_not_reset_status(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="ACTIVE")
+    store = DuckDBStore(store_path)
+
+    updated = store.update_rule(
+        "SITE-900", fields={"SEVERITY": "LOW"}, changed_by="kevin@connexa.co.nz"
+    )
+
+    assert updated["SEVERITY"] == "LOW"
+    assert updated["STATUS"] == "ACTIVE"
+    assert updated["VERSION"] == 1
+
+
+def test_answer_clarification_sets_answer(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="NEEDS_CLARIFICATION")
+    store = DuckDBStore(store_path)
+
+    updated = store.answer_clarification(
+        "SITE-900", "Active means Operational status.", changed_by="owner@connexa.co.nz"
+    )
+
+    assert updated["CLARIFICATION_ANSWER"] == "Active means Operational status."
+    assert updated["STATUS"] == "NEEDS_CLARIFICATION"  # unchanged until recompiled
+
+
+def test_reject_confirmation_returns_to_draft_with_comment(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="OWNER_CONFIRMED")
+    store = DuckDBStore(store_path)
+
+    updated = store.reject_confirmation(
+        "SITE-900", "Not what I meant", changed_by="owner@connexa.co.nz"
+    )
+
+    assert updated["STATUS"] == "DRAFT"
+    con = duckdb.connect(str(store_path))
+    history = con.execute(
+        "SELECT CHANGE_TYPE, COMMENT FROM DQ_RULE_HISTORY WHERE RULE_CODE = 'SITE-900' "
+        "ORDER BY HISTORY_ID DESC LIMIT 1"
+    ).fetchone()
+    con.close()
+    assert history == ("OWNER_REJECTED", "Not what I meant")
+
+
+def test_record_preview_sets_counts_and_timestamp(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="COMPILED")
+    store = DuckDBStore(store_path)
+
+    updated = store.record_preview(
+        "SITE-900", evaluated=100, failed=5, changed_by="owner@connexa.co.nz"
+    )
+
+    assert updated["PREVIEW_EVALUATED_COUNT"] == 100
+    assert updated["PREVIEW_FAILED_COUNT"] == 5
+    assert updated["PREVIEW_AT"] is not None
+
+
+def test_list_owners_returns_active_owners(store_path):
+    con = duckdb.connect(str(store_path))
+    con.execute(
+        "INSERT INTO DQ_OWNER (OWNER_EMAIL, DISPLAY_NAME, IS_APPROVER, IS_ACTIVE) "
+        "VALUES ('a@connexa.co.nz', 'A Owner', TRUE, TRUE), "
+        "('b@connexa.co.nz', 'B Owner', FALSE, FALSE)"
+    )
+    con.close()
+    store = DuckDBStore(store_path)
+
+    owners = store.list_owners()
+
+    emails = {o["OWNER_EMAIL"] for o in owners}
+    assert "a@connexa.co.nz" in emails
+    assert "b@connexa.co.nz" not in emails

@@ -1,6 +1,8 @@
 """Tests for dq validate / dq rule set-sql / dq rule clarify (brief §10.5,
 §7), against a temp DuckDB store and a FakeExecutor -- never Snowflake."""
 
+from datetime import datetime
+
 import duckdb
 import pyarrow as pa
 import pytest
@@ -366,3 +368,178 @@ def test_approve_rule_unknown_code_raises(store_path):
 
     with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
         rule_ops.approve_rule(store, "NOPE-999", approved_by="kevin@connexa.co.nz")
+
+
+# --- create_rule / update_rule / answer_clarification / reject_confirmation --------
+
+
+def test_create_rule_delegates_to_store_with_correct_prefix(store_path):
+    store = DuckDBStore(store_path)
+
+    created = rule_ops.create_rule(
+        store,
+        rule_name="Test",
+        statement="Statement.",
+        domain="SITE_MASTER",
+        target_object="SITE",
+        scope="SITE",
+        dimension="VALIDITY",
+        severity="LOW",
+        owner_email="owner@connexa.co.nz",
+        created_by="kevin@connexa.co.nz",
+    )
+
+    assert created["RULE_CODE"].startswith("SITE-")
+    assert created["STATUS"] == "DRAFT"
+
+
+def test_create_rule_unknown_target_object_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="No rule-code prefix"):
+        rule_ops.create_rule(
+            store,
+            rule_name="Test",
+            statement="Statement.",
+            domain="SITE_MASTER",
+            target_object="EQUIPMENT",
+            scope="SITE",
+            dimension="VALIDITY",
+            severity="LOW",
+            owner_email="owner@connexa.co.nz",
+            created_by="kevin@connexa.co.nz",
+        )
+
+
+def test_update_rule_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.update_rule(store, "NOPE-999", fields={"SEVERITY": "LOW"}, changed_by="kevin")
+
+
+def test_update_rule_edits_statement(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="COMPILED", check_sql="SELECT 1")
+    store = DuckDBStore(store_path)
+
+    updated = rule_ops.update_rule(
+        store, "SITE-900", fields={"RULE_STATEMENT": "New wording"}, changed_by="kevin"
+    )
+
+    assert updated["RULE_STATEMENT"] == "New wording"
+    assert updated["STATUS"] == "DRAFT"
+
+
+def test_answer_clarification_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.answer_clarification(store, "NOPE-999", "answer", changed_by="owner")
+
+
+def test_reject_confirmation_requires_comment(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="OWNER_CONFIRMED")
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="comment is required"):
+        rule_ops.reject_confirmation(store, "SITE-900", "   ", changed_by="owner")
+
+
+def test_reject_confirmation_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.reject_confirmation(store, "NOPE-999", "not right", changed_by="owner")
+
+
+# --- preview_rule ------------------------------------------------------------------
+
+
+def test_preview_rule_returns_sample_failing_rows(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT s.ID FROM {{ src.SITE }} s")
+    store = DuckDBStore(store_path)
+    store.compile_rule(
+        "SITE-900",
+        check_sql="SELECT s.ID FROM {{ src.SITE }} s",
+        validation_result={"ok": True},
+        changed_by="kevin",
+        generated_at=datetime.now(),
+    )
+    executor = FakeExecutor()
+    executor.rule_tables["SITE-900"] = make_table([("r1", True), ("r2", False), ("r3", False)])
+
+    result = rule_ops.preview_rule(
+        store,
+        executor,
+        sources_config,
+        "SITE-900",
+        config=CONFIG,
+        query_tag=QUERY_TAG,
+        sample_size=1,
+    )
+
+    assert result["ok"] is True
+    assert result["records_evaluated"] == 3
+    assert result["records_failed"] == 2
+    assert len(result["sample"]) == 1  # capped by sample_size
+    row = result["sample"][0]
+    assert row["record_id"] == "r2"
+    assert row["record_url"].startswith("https://connexa.lightning.force.com/lightning/r/Site__c/")
+
+
+def test_preview_rule_persists_preview_counts(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900")
+    store = DuckDBStore(store_path)
+    store.compile_rule(
+        "SITE-900",
+        check_sql="SELECT s.ID FROM {{ src.SITE }} s",
+        validation_result={"ok": True},
+        changed_by="kevin",
+        generated_at=datetime.now(),
+    )
+    executor = FakeExecutor()
+    executor.rule_tables["SITE-900"] = make_table([("r1", False)])
+
+    rule_ops.preview_rule(
+        store, executor, sources_config, "SITE-900", config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    updated = store.get_rule("SITE-900")
+    assert updated["PREVIEW_EVALUATED_COUNT"] == 1
+    assert updated["PREVIEW_FAILED_COUNT"] == 1
+    assert updated["PREVIEW_AT"] is not None
+
+
+def test_preview_rule_lint_failure_is_reported_not_raised(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="DROP TABLE {{ src.SITE }}")
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+
+    result = rule_ops.preview_rule(
+        store, executor, sources_config, "SITE-900", config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    assert result["ok"] is False
+    assert result["sample"] == []
+    assert executor.calls == []
+
+
+def test_preview_rule_no_check_sql_raises(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900", check_sql=None)
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+
+    with pytest.raises(rule_ops.RuleOpsError, match="no CHECK_SQL"):
+        rule_ops.preview_rule(
+            store, executor, sources_config, "SITE-900", config=CONFIG, query_tag=QUERY_TAG
+        )
+
+
+def test_preview_rule_unknown_code_raises(store_path, sources_config):
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.preview_rule(
+            store, executor, sources_config, "NOPE-999", config=CONFIG, query_tag=QUERY_TAG
+        )

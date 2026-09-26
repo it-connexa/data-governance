@@ -165,3 +165,50 @@ class GovernanceStore(Protocol):
     def approve_rule(self, rule_code: str, *, approved_by: str) -> dict[str, Any]: ...
 
     def get_owner(self, owner_email: str) -> dict[str, Any] | None: ...
+
+    def list_owners(self) -> list[dict[str, Any]]: ...
+
+    def create_rule(
+        self,
+        *,
+        prefix: str,
+        rule_name: str,
+        statement: str,
+        domain: str,
+        target_object: str,
+        scope: str,
+        dimension: str,
+        severity: str,
+        owner_email: str,
+        record_label: str = "records",
+        item_label: str | None = None,
+        created_by: str,
+        facilitated_by: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def update_rule(
+        self,
+        rule_code: str,
+        *,
+        fields: dict[str, Any],
+        changed_by: str,
+        facilitated_by: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def answer_clarification(
+        self, rule_code: str, answer: str, *, changed_by: str, facilitated_by: str | None = None
+    ) -> dict[str, Any]: ...
+
+    def reject_confirmation(
+        self, rule_code: str, comment: str, *, changed_by: str, facilitated_by: str | None = None
+    ) -> dict[str, Any]: ...
+
+    def record_preview(
+        self,
+        rule_code: str,
+        *,
+        evaluated: int,
+        failed: int,
+        changed_by: str,
+        facilitated_by: str | None = None,
+    ) -> dict[str, Any]: ...
