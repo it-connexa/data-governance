@@ -31,9 +31,9 @@ Local-first PoC that turns plain-English data governance rules into deterministi
 
 - [~] Step 1 — Scaffold + settings loader done (`pyproject.toml`, `src/dq/settings.py`); `secrets.py`/`snowflake_client.py` and connectivity still pending SETUP.md
 - [~] Step 2 — Renderer + linter (`src/dq/sources.py`, sqlglot-based) and contract/result validator (`src/dq/contract.py`) done, test-first, `uv run pytest` (54 passed) and `uv run ruff check` clean
-- [ ] Step 3 — Catalogue labels, validate, rule set-sql / clarify, `/compile-rules`
-- [ ] Step 4 — Lifecycle + engine (FakeExecutor tests)
-- [ ] Step 5 — Totals, rollups, scoring
+- [ ] Step 3 — Catalogue labels, validate, rule set-sql / clarify, `/compile-rules` (needs Snowflake connectivity)
+- [~] Step 4 — Lifecycle done (`src/dq/lifecycle.py`, `src/dq/store/`: `GovernanceStore` protocol + DuckDB implementation, integration-tested against a temp DB built from `sql/dq_poc_duckdb_schema.sql`); engine.py (FakeExecutor orchestration) still to do
+- [x] Step 5 — Totals, rollups, scoring (`src/dq/scoring.py`), test-first. All Snowflake-free work so far: 104 passed, `uv run ruff check` clean
 - [ ] Step 6 — Streamlit app
 - [ ] Step 7 — Export + SharePoint
 - [ ] Step 8 — Narratives

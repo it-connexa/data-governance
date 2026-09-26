@@ -52,9 +52,10 @@ def test_expands_home_in_every_path_field(tmp_path: Path, monkeypatch: pytest.Mo
     assert settings.paths.sources == fake_home / "dev" / "dq-governance" / "config" / "sources.yml"
     assert settings.paths.backups == fake_home / "dq-data" / "backups"
     # export path has no leading ~ in this fixture, so it stays absolute-as-given
-    assert settings.paths.export == Path(
-        "~/Library/CloudStorage/OneDrive-Connexa/exports"
-    ).expanduser()
+    assert (
+        settings.paths.export
+        == Path("~/Library/CloudStorage/OneDrive-Connexa/exports").expanduser()
+    )
 
 
 def test_missing_file_raises_clear_error(tmp_path: Path) -> None:

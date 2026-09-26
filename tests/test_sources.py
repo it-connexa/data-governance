@@ -67,10 +67,7 @@ def test_render_skips_default_filters_when_disabled(config):
 
 
 def test_render_substitutes_multiple_sources(config):
-    sql = (
-        "SELECT m.ID FROM {{ src.PROJECT }} p "
-        "JOIN {{ src.SITE }} s ON s.ID = p.SITE_ID"
-    )
+    sql = "SELECT m.ID FROM {{ src.PROJECT }} p JOIN {{ src.SITE }} s ON s.ID = p.SITE_ID"
     rendered = render(sql, config)
 
     assert "TESTDB.TESTSCHEMA.PROJECT__C" in rendered
@@ -195,7 +192,5 @@ def test_lint_rejects_top_level_limit(config):
 
 def test_lint_allows_limit_in_subquery(config):
     # A LIMIT nested inside a derived table is not a top-level LIMIT.
-    sql = (
-        "SELECT * FROM (SELECT * FROM {{ src.SITE }} ORDER BY ID LIMIT 10) t"
-    )
+    sql = "SELECT * FROM (SELECT * FROM {{ src.SITE }} ORDER BY ID LIMIT 10) t"
     lint(sql, config)
