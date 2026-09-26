@@ -1,7 +1,8 @@
-"""Loader for ~/.dq/settings.toml (docs/SETUP.md step 9).
+"""Loader for .dq/settings.toml (docs/SETUP.md step 9).
 
-Snowflake-free: only parses TOML and resolves local paths. Never touches
-Keychain or opens a network connection.
+.dq/ lives at the project root, gitignored (docs/adr/0001). Snowflake-free:
+only parses TOML and resolves local paths. Never touches Keychain or opens
+a network connection.
 """
 
 from __future__ import annotations
@@ -10,14 +11,14 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_SETTINGS_PATH = Path.home() / ".dq" / "settings.toml"
+DEFAULT_SETTINGS_PATH = Path(".dq") / "settings.toml"
 
 _SNOWFLAKE_KEYS = ("account", "user", "role", "warehouse", "keychain_service", "keychain_account")
 _PATH_KEYS = ("duckdb", "sources", "export", "backups")
 
 
 class SettingsError(Exception):
-    """Raised when ~/.dq/settings.toml is missing, unreadable or incomplete."""
+    """Raised when .dq/settings.toml is missing, unreadable or incomplete."""
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ class Settings:
 
 
 def load_settings(path: Path | None = None) -> Settings:
-    """Load and validate settings from `path` (defaults to ~/.dq/settings.toml)."""
+    """Load and validate settings from `path` (defaults to .dq/settings.toml)."""
     settings_path = path if path is not None else DEFAULT_SETTINGS_PATH
 
     if not settings_path.exists():

@@ -19,11 +19,11 @@
       "Bash(uv run dq run:*)",
       "Bash(uv run dq export:*)",
       "Read(~/dq-data/**)",
-      "Read(~/.dq/**)",
+      "Read(.dq/**)",
       "Read(~/.snowflake/**)",
       "Read(~/.ssh/**)",
       "Edit(~/dq-data/**)",
-      "Edit(~/.dq/**)"
+      "Edit(.dq/**)"
     ]
   }
 }

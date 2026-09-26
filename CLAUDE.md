@@ -7,7 +7,7 @@ Local-first PoC that turns plain-English data governance rules into deterministi
 ## Hard rules
 
 - **Never access production row data.** Interact with Snowflake and the governance store only through `dq` CLI commands that return metadata or counts (brief §6–7). Never run `dq preview`, `dq run` or `dq export`, and never run ad-hoc Snowflake or DuckDB queries against real data.
-- **Never read or handle credentials.** Don't read `~/.dq/`, `~/dq-data/`, `~/.snowflake/` or Keychain entries. Never ask the user to paste keys, tokens or connection secrets into this session. For setup steps involving keys (SETUP.md step 3), tell the user to run them in a separate terminal.
+- **Never read or handle credentials.** Don't read `.dq/` (project-local, gitignored — see `docs/adr/0001-local-config-location.md`), `~/dq-data/`, `~/.snowflake/` or Keychain entries. Never ask the user to paste keys, tokens or connection secrets into this session. For setup steps involving keys (SETUP.md step 3), tell the user to run them in a separate terminal.
 - Use `DQ_TEST` data, synthetic fixtures and the `FakeExecutor` for anything that needs rows.
 - If a task seems to need production rows or credentials, stop and ask.
 

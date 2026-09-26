@@ -4,3 +4,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+
+# Local Snowflake connection config (account, role, paths) and the public
+# half of the key pair. The private key itself never touches disk -- it
+# lives in macOS Keychain (docs/SETUP.md step 3). See docs/adr/0001.
+.dq/

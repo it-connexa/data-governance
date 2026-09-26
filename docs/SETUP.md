@@ -64,11 +64,12 @@ Check Snowflake's documentation for which models run natively in that region. If
 
 ## Step 3 — Generate a key pair and store it in Keychain
 
-On your Mac:
+`.dq/` is a project-local, gitignored folder for local Snowflake connection
+config (see `docs/adr/0001-local-config-location.md`). From the repo root:
 
 ```bash
-mkdir -p ~/.dq && chmod 700 ~/.dq
-cd ~/.dq
+mkdir -p .dq && chmod 700 .dq
+cd .dq
 
 # Generate private key (PKCS#8) and public key
 openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
@@ -82,15 +83,17 @@ security find-generic-password -a dq_poc -s dq-snowflake-key -w | wc -c
 
 # Remove the private key file
 rm rsa_key.p8
+
+cd ..
 ```
 
 Send the admin the **public key body only**: the contents of `rsa_key.pub` without the `-----BEGIN PUBLIC KEY-----` / `-----END PUBLIC KEY-----` lines, joined into one line:
 
 ```bash
-grep -v "PUBLIC KEY" ~/.dq/rsa_key.pub | tr -d '\n'
+grep -v "PUBLIC KEY" .dq/rsa_key.pub | tr -d '\n'
 ```
 
-The app reads the key from Keychain through `keyring`. Nothing sensitive stays on disk.
+The app reads the key from Keychain through `keyring`. Nothing sensitive stays on disk — `.dq/rsa_key.pub` is the public half, harmless if seen, and `.gitignore` already excludes `.dq/` so it's never committed.
 
 ## Step 4 — Admin creates the read-only access
 
@@ -112,7 +115,7 @@ Install the tools you'll need for this and later steps:
 brew install uv duckdb
 ```
 
-Save this as `~/.dq/verify.py` and run it with `uv run --with snowflake-connector-python --with keyring --with cryptography python ~/.dq/verify.py`, filling in your account identifier and one table name:
+Save this as `.dq/verify.py` (from the repo root) and run it with `uv run --with snowflake-connector-python --with keyring --with cryptography python .dq/verify.py`, filling in your account identifier and one table name:
 
 ```python
 import base64, keyring, snowflake.connector
@@ -216,7 +219,7 @@ The final query should return no rows. Add more owners with `INSERT INTO DQ_OWNE
 1. Create a document library, for example `Data Governance PoC` in an appropriate IT or Data site, and restrict membership to you, the data owners and the Power BI dataset owner.
 2. Add a folder `exports`.
 3. Sync it with the OneDrive client, or use "Add shortcut to My files", and note the local path. It will look something like `~/Library/CloudStorage/OneDrive-Connexa/Data Governance PoC - exports`.
-4. Use that path as `EXPORT_PATH` in step 7 and in `~/.dq/settings.toml`.
+4. Use that path as `EXPORT_PATH` in step 7 and in `.dq/settings.toml`.
 
 This synced folder only ever receives the Parquet extracts. The DuckDB file stays in `~/dq-data`.
 
@@ -224,7 +227,8 @@ Power BI connects later with the SharePoint Folder connector, reading the Parque
 
 ## Step 9 — Local settings and backups
 
-Create `~/.dq/settings.toml`. Claude Code will scaffold the loader against this shape:
+Create `.dq/settings.toml` at the project root (copy `config/settings.example.toml`
+and fill in real values). Claude Code will scaffold the loader against this shape:
 
 ```toml
 [snowflake]
@@ -243,7 +247,7 @@ backups    = "~/dq-data/backups"
 ```
 
 ```bash
-chmod 600 ~/.dq/settings.toml
+chmod 600 .dq/settings.toml
 mkdir -p ~/dq-data/backups
 ```
 
@@ -264,7 +268,7 @@ Keep the last 4–6 exports. This goes in the runbook, and Claude Code can wrap 
 - [ ] Verify script passes: data read, write blocked, Cortex responds
 - [ ] `governance.duckdb` exists with 12 draft rules, real owners and no placeholder config
 - [ ] SharePoint export folder is synced locally and restricted
-- [ ] `~/.dq/settings.toml` is in place
+- [ ] `.dq/settings.toml` is in place
 - [ ] Repo created with `docs/BRIEF.md`, `config/sources.yml`, `sql/` files and `.claude/settings.json` from brief §6
 
 Then start Claude Code with build order step 1 in the brief.

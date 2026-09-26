@@ -1,8 +1,10 @@
-# Template for ~/.dq/settings.toml (docs/SETUP.md step 9).
-# Copy this file to ~/.dq/settings.toml, fill in real values, then:
-#   chmod 600 ~/.dq/settings.toml
-# Never commit the real file — it names the Snowflake account and Keychain
-# entry, even though the private key itself stays in Keychain.
+# Template for .dq/settings.toml (docs/SETUP.md step 9).
+# Copy this file to .dq/settings.toml at the project root, fill in real
+# values, then:
+#   chmod 600 .dq/settings.toml
+# .dq/ is gitignored (docs/adr/0001) — never commit the real file. It
+# names the Snowflake account and Keychain entry, even though the private
+# key itself stays in Keychain.
 
 [snowflake]
 account          = "<ACCOUNT_IDENTIFIER>"

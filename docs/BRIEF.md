@@ -76,7 +76,7 @@ dq-governance/
 ├── pyproject.toml                  # uv-managed; entry point `dq = dq.cli:app`
 ├── config/
 │   ├── sources.yml
-│   └── settings.example.toml       # copy to ~/.dq/settings.toml (not committed)
+│   └── settings.example.toml       # copy to .dq/settings.toml (project-local, gitignored)
 ├── docs/
 │   ├── BRIEF.md
 │   ├── data-dictionary.md          # in-scope objects/fields + business meaning (human-maintained)
@@ -91,7 +91,7 @@ dq-governance/
 │   └── compile_rule_v1.md          # stretch: in-app Cortex compilation
 ├── src/dq/
 │   ├── cli.py                      # Typer CLI — the only interface Claude Code uses
-│   ├── settings.py                 # loads ~/.dq/settings.toml
+│   ├── settings.py                 # loads .dq/settings.toml
 │   ├── secrets.py                  # private key from macOS Keychain via `keyring`
 │   ├── snowflake_client.py         # connection, query tag, timeouts, Arrow fetch
 │   ├── sources.py                  # sources.yml loader + {{ src.X }} renderer + SQL lint
@@ -120,7 +120,7 @@ dq-governance/
 - Dependencies: `duckdb` (≥1.4, which adds `MERGE`), `snowflake-connector-python[pandas]`, `pyarrow`, `pytz` (needed by DuckDB for timezone-aware fetches), `keyring`, `cryptography`, `pyyaml`, `typer`, `streamlit`, `pytest` and `ruff`.
 - Local paths:
   - governance DB at `~/dq-data/governance.duckdb`
-  - settings at `~/.dq/settings.toml` (Snowflake account, user, warehouse, role, DB path, export path)
+  - settings at `.dq/settings.toml`, project-local and gitignored (Snowflake account, user, warehouse, role, DB path, export path) — see `docs/adr/0001-local-config-location.md`
   - neither is committed or placed in an iCloud-, OneDrive- or SharePoint-synced folder
 - The private key comes from macOS Keychain (service `dq-snowflake-key`, account `dq_poc`, stored base64-encoded) through `keyring`. It is never written to disk by the app.
 - Every Snowflake session sets:
@@ -165,7 +165,7 @@ dq-governance/
       "Bash(python -c:*)",
       "Bash(uv run python -c:*)",
       "Read(~/dq-data/**)",
-      "Read(~/.dq/**)",
+      "Read(.dq/**)",
       "Read(~/.snowflake/**)"
     ]
   }
