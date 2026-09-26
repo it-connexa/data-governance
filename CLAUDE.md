@@ -29,9 +29,9 @@ Local-first PoC that turns plain-English data governance rules into deterministi
 
 ## Status
 
-- [~] Step 1 — Scaffold + settings loader done (`pyproject.toml`, `src/dq/settings.py`); `secrets.py`/`snowflake_client.py` and connectivity still pending SETUP.md
-- [~] Step 2 — Renderer + linter (`src/dq/sources.py`, sqlglot-based) and contract/result validator (`src/dq/contract.py`) done, test-first, `uv run pytest` (54 passed) and `uv run ruff check` clean
-- [ ] Step 3 — Catalogue labels, validate, rule set-sql / clarify, `/compile-rules` (needs Snowflake connectivity)
+- [x] Step 1 — Scaffold, settings, `secrets.py` (Keychain via `keyring`, mocked in tests) and `snowflake_client.py` (injectable connector, `SnowflakeExecutor` adapter for `engine.RuleExecutor`) all done. Connectivity proven live via `.dq/verify.py` (account `CONNEXA-DATA`, role/warehouse/read/write-blocked/Cortex all confirmed by Kevin)
+- [x] Step 2 — Renderer + linter (`src/dq/sources.py`, sqlglot-based) and contract/result validator (`src/dq/contract.py`) done, test-first
+- [x] Step 3 — `src/dq/catalogue.py` (refresh/show/load-labels against `SOURCE_COLUMN`), `src/dq/rule_ops.py` (validate/set-sql/clarify), full `dq` CLI wiring (`src/dq/cli.py`: `dq catalogue *`, `dq rule *`, `dq validate`), `.claude/settings.json` allow/deny updated per brief §7, and `.claude/commands/compile-rules.md`. `config/sources.yml` has real SITE/PROJECT tables (Kevin's Snowflake); SITE-004 and PRJ-002 compiled in `rules/sql/` and lint/render-tested locally, not yet run through `dq rule set-sql` against live Snowflake
 - [x] Step 4 — Lifecycle (`src/dq/lifecycle.py`), `src/dq/store/` (`GovernanceStore` protocol + DuckDB implementation), and `src/dq/engine.py` (run orchestration behind a `RuleExecutor` protocol, FakeExecutor-tested per brief §11: fix/reopen/exception-expiry/isolation/idempotency scenarios) all done, test-first
 - [x] Step 5 — Totals, rollups, scoring (`src/dq/scoring.py`), wired into the engine's per-run object rollups and site scores. All Snowflake-free work so far: 116 passed, `uv run ruff check` clean
 - [ ] Step 6 — Streamlit app

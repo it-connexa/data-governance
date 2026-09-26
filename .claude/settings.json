@@ -7,7 +7,13 @@
       "Bash(uv run ruff:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(uv run dq catalogue show:*)",
+      "Bash(uv run dq rule list:*)",
+      "Bash(uv run dq rule show:*)",
+      "Bash(uv run dq rule set-sql:*)",
+      "Bash(uv run dq rule clarify:*)",
+      "Bash(uv run dq validate:*)"
     ],
     "deny": [
       "Bash(snow:*)",
@@ -15,9 +21,13 @@
       "Bash(security:*)",
       "Bash(python -c:*)",
       "Bash(uv run python -c:*)",
+      "Bash(uv run dq init:*)",
+      "Bash(uv run dq catalogue refresh:*)",
+      "Bash(uv run dq catalogue load-labels:*)",
       "Bash(uv run dq preview:*)",
       "Bash(uv run dq run:*)",
       "Bash(uv run dq export:*)",
+      "Bash(uv run dq app:*)",
       "Read(~/dq-data/**)",
       "Read(.dq/**)",
       "Read(~/.snowflake/**)",

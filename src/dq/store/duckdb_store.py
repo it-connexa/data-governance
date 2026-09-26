@@ -57,6 +57,13 @@ class DuckDBStore:
             rows = con.execute("SELECT SEVERITY, WEIGHT FROM DQ_SEVERITY").fetchall()
             return dict(rows)
 
+    def get_config_value(self, key: str) -> str | None:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT CONFIG_VALUE FROM DQ_CONFIG WHERE CONFIG_KEY = ?", [key]
+            ).fetchone()
+            return row[0] if row else None
+
     def start_run(
         self, run_id: str, run_type: str, triggered_by: str, started_at: datetime
     ) -> None:
@@ -482,9 +489,210 @@ class DuckDBStore:
                     version,
                     change_type,
                     status_after,
-                    json.dumps(snapshot),
+                    json.dumps(snapshot, default=str),
                     changed_by,
                     facilitated_by,
                     comment,
                 ],
             )
+
+    # --- catalogue (brief §7: dq catalogue refresh/show/load-labels) ---------
+
+    def upsert_source_columns(
+        self, source_name: str, columns: list[dict[str, Any]], refreshed_at: datetime
+    ) -> None:
+        with self._connect() as con:
+            incoming_names = [c["column_name"] for c in columns]
+            if incoming_names:
+                placeholders = ", ".join("?" * len(incoming_names))
+                con.execute(
+                    f"DELETE FROM SOURCE_COLUMN WHERE SOURCE_NAME = ? "
+                    f"AND COLUMN_NAME NOT IN ({placeholders})",
+                    [source_name, *incoming_names],
+                )
+            else:
+                con.execute("DELETE FROM SOURCE_COLUMN WHERE SOURCE_NAME = ?", [source_name])
+
+            for c in columns:
+                con.execute(
+                    """
+                    MERGE INTO SOURCE_COLUMN AS tgt
+                    USING (
+                        SELECT ? AS SOURCE_NAME, ? AS COLUMN_NAME, ? AS DATA_TYPE,
+                               ? AS IS_NULLABLE, ? AS ORDINAL_POSITION,
+                               ? AS COLUMN_COMMENT, ? AS REFRESHED_AT
+                    ) AS src
+                    ON tgt.SOURCE_NAME = src.SOURCE_NAME AND tgt.COLUMN_NAME = src.COLUMN_NAME
+                    WHEN MATCHED THEN UPDATE SET
+                        DATA_TYPE = src.DATA_TYPE, IS_NULLABLE = src.IS_NULLABLE,
+                        ORDINAL_POSITION = src.ORDINAL_POSITION,
+                        COLUMN_COMMENT = src.COLUMN_COMMENT, REFRESHED_AT = src.REFRESHED_AT
+                    WHEN NOT MATCHED THEN INSERT (
+                        SOURCE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE,
+                        ORDINAL_POSITION, COLUMN_COMMENT, REFRESHED_AT
+                    )
+                    VALUES (
+                        src.SOURCE_NAME, src.COLUMN_NAME, src.DATA_TYPE, src.IS_NULLABLE,
+                        src.ORDINAL_POSITION, src.COLUMN_COMMENT, src.REFRESHED_AT
+                    )
+                    """,
+                    [
+                        source_name,
+                        c["column_name"],
+                        c["data_type"],
+                        c.get("is_nullable"),
+                        c.get("ordinal_position"),
+                        c.get("column_comment"),
+                        refreshed_at,
+                    ],
+                )
+
+    def update_column_labels(self, labels: list[tuple[str, str, str]]) -> int:
+        with self._connect() as con:
+            for source_name, column_name, label in labels:
+                con.execute(
+                    "UPDATE SOURCE_COLUMN SET COLUMN_LABEL = ? "
+                    "WHERE SOURCE_NAME = ? AND COLUMN_NAME = ?",
+                    [label, source_name, column_name],
+                )
+        return len(labels)
+
+    def get_source_columns(
+        self, source_name: str | None = None, search: str | None = None
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM SOURCE_COLUMN WHERE 1=1"
+        params: list[Any] = []
+        if source_name:
+            query += " AND SOURCE_NAME = ?"
+            params.append(source_name)
+        if search:
+            query += " AND (COLUMN_LABEL ILIKE ? OR COLUMN_NAME ILIKE ?)"
+            params += [f"%{search}%", f"%{search}%"]
+        query += " ORDER BY SOURCE_NAME, ORDINAL_POSITION"
+
+        with self._connect() as con:
+            cur = con.execute(query, params)
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    # --- rule registry (brief §7: dq rule list/show/set-sql/clarify) ---------
+
+    def list_rules(self, status: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM DQ_RULE"
+        params: list[Any] = []
+        if status:
+            query += " WHERE STATUS = ?"
+            params.append(status)
+        query += " ORDER BY RULE_CODE"
+
+        with self._connect() as con:
+            cur = con.execute(query, params)
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def get_rule(self, rule_code: str) -> dict[str, Any] | None:
+        with self._connect() as con:
+            cur = con.execute("SELECT * FROM DQ_RULE WHERE RULE_CODE = ?", [rule_code])
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return _rows_to_dicts(cur, [row])[0]
+
+    def compile_rule(
+        self,
+        rule_code: str,
+        *,
+        check_sql: str,
+        validation_result: dict[str, Any],
+        changed_by: str,
+        generated_at: datetime,
+        generated_by: str = "claude-code",
+    ) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET CHECK_SQL = ?, CHECK_SQL_GENERATED_BY = ?, CHECK_SQL_GENERATED_AT = ?,
+                    VALIDATION_RESULT = ?, STATUS = 'COMPILED', VERSION = VERSION + 1,
+                    UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [
+                    check_sql,
+                    generated_by,
+                    generated_at,
+                    json.dumps(validation_result, default=str),
+                    changed_by,
+                    rule_code,
+                ],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="SQL_COMPILED",
+            status_after="COMPILED",
+            snapshot=updated,
+            changed_by=changed_by,
+        )
+        return updated
+
+    def record_validation(
+        self, rule_code: str, validation_result: dict[str, Any], *, changed_by: str
+    ) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET VALIDATION_RESULT = ?, UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [json.dumps(validation_result, default=str), changed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="VALIDATED",
+            status_after=updated["STATUS"],
+            snapshot=updated,
+            changed_by=changed_by,
+        )
+        return updated
+
+    def set_rule_clarification(
+        self, rule_code: str, question: str, *, changed_by: str
+    ) -> dict[str, Any]:
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET STATUS = 'NEEDS_CLARIFICATION', CLARIFICATION_QUESTION = ?,
+                    UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [question, changed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="CLARIFICATION",
+            status_after="NEEDS_CLARIFICATION",
+            snapshot=updated,
+            changed_by=changed_by,
+        )
+        return updated

@@ -53,6 +53,8 @@ class GovernanceStore(Protocol):
 
     def get_severity_weights(self) -> dict[str, int]: ...
 
+    def get_config_value(self, key: str) -> str | None: ...
+
     def start_run(
         self, run_id: str, run_type: str, triggered_by: str, started_at: datetime
     ) -> None: ...
@@ -120,3 +122,40 @@ class GovernanceStore(Protocol):
         facilitated_by: str | None = None,
         comment: str | None = None,
     ) -> None: ...
+
+    # --- catalogue (brief §7: dq catalogue refresh/show/load-labels) ---------
+
+    def upsert_source_columns(
+        self, source_name: str, columns: list[dict[str, Any]], refreshed_at: datetime
+    ) -> None: ...
+
+    def update_column_labels(self, labels: list[tuple[str, str, str]]) -> int: ...
+
+    def get_source_columns(
+        self, source_name: str | None = None, search: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    # --- rule registry (brief §7: dq rule list/show/set-sql/clarify) ---------
+
+    def list_rules(self, status: str | None = None) -> list[dict[str, Any]]: ...
+
+    def get_rule(self, rule_code: str) -> dict[str, Any] | None: ...
+
+    def compile_rule(
+        self,
+        rule_code: str,
+        *,
+        check_sql: str,
+        validation_result: dict[str, Any],
+        changed_by: str,
+        generated_at: datetime,
+        generated_by: str = "claude-code",
+    ) -> dict[str, Any]: ...
+
+    def record_validation(
+        self, rule_code: str, validation_result: dict[str, Any], *, changed_by: str
+    ) -> dict[str, Any]: ...
+
+    def set_rule_clarification(
+        self, rule_code: str, question: str, *, changed_by: str
+    ) -> dict[str, Any]: ...
