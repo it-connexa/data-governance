@@ -32,8 +32,8 @@ Local-first PoC that turns plain-English data governance rules into deterministi
 - [~] Step 1 — Scaffold + settings loader done (`pyproject.toml`, `src/dq/settings.py`); `secrets.py`/`snowflake_client.py` and connectivity still pending SETUP.md
 - [~] Step 2 — Renderer + linter (`src/dq/sources.py`, sqlglot-based) and contract/result validator (`src/dq/contract.py`) done, test-first, `uv run pytest` (54 passed) and `uv run ruff check` clean
 - [ ] Step 3 — Catalogue labels, validate, rule set-sql / clarify, `/compile-rules` (needs Snowflake connectivity)
-- [~] Step 4 — Lifecycle done (`src/dq/lifecycle.py`, `src/dq/store/`: `GovernanceStore` protocol + DuckDB implementation, integration-tested against a temp DB built from `sql/dq_poc_duckdb_schema.sql`); engine.py (FakeExecutor orchestration) still to do
-- [x] Step 5 — Totals, rollups, scoring (`src/dq/scoring.py`), test-first. All Snowflake-free work so far: 104 passed, `uv run ruff check` clean
+- [x] Step 4 — Lifecycle (`src/dq/lifecycle.py`), `src/dq/store/` (`GovernanceStore` protocol + DuckDB implementation), and `src/dq/engine.py` (run orchestration behind a `RuleExecutor` protocol, FakeExecutor-tested per brief §11: fix/reopen/exception-expiry/isolation/idempotency scenarios) all done, test-first
+- [x] Step 5 — Totals, rollups, scoring (`src/dq/scoring.py`), wired into the engine's per-run object rollups and site scores. All Snowflake-free work so far: 116 passed, `uv run ruff check` clean
 - [ ] Step 6 — Streamlit app
 - [ ] Step 7 — Export + SharePoint
 - [ ] Step 8 — Narratives

@@ -47,6 +47,16 @@ class DuckDBStore:
             cur = con.execute("SELECT * FROM DQ_RULE WHERE STATUS = 'ACTIVE' ORDER BY RULE_CODE")
             return _rows_to_dicts(cur, cur.fetchall())
 
+    def get_retired_rule_ids(self) -> list[int]:
+        with self._connect() as con:
+            rows = con.execute("SELECT RULE_ID FROM DQ_RULE WHERE STATUS = 'RETIRED'").fetchall()
+            return [row[0] for row in rows]
+
+    def get_severity_weights(self) -> dict[str, int]:
+        with self._connect() as con:
+            rows = con.execute("SELECT SEVERITY, WEIGHT FROM DQ_SEVERITY").fetchall()
+            return dict(rows)
+
     def start_run(
         self, run_id: str, run_type: str, triggered_by: str, started_at: datetime
     ) -> None:
@@ -154,6 +164,7 @@ class DuckDBStore:
         rows: list[FindingInput],
     ) -> ApplyFindingsResult:
         counts: dict[Action, int] = {}
+        row_statuses: list[str | None] = []
         with self._connect() as con:
             evaluated_finding_ids: list[str] = []
 
@@ -171,6 +182,8 @@ class DuckDBStore:
                 verdict = Verdict.PASSED if row.is_valid else Verdict.FAILED
                 decision = decide(existing_status, active_disposition, verdict)
                 counts[decision.action] = counts.get(decision.action, 0) + 1
+                final_status = decision.new_status or existing_status
+                row_statuses.append(final_status.value if final_status else None)
 
                 self._apply_decision(
                     con,
@@ -198,6 +211,7 @@ class DuckDBStore:
             resolved_fixed=counts.get(Action.RESOLVE_FIXED, 0),
             resolved_out_of_scope=counts.get(Action.RESOLVE_OUT_OF_SCOPE, 0),
             no_change=counts.get(Action.NO_CHANGE, 0),
+            row_statuses=row_statuses,
         )
 
     def _apply_decision(

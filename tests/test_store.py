@@ -95,7 +95,7 @@ def apply(
     )
 
 
-# --- get_active_rules ---------------------------------------------------------
+# --- get_active_rules, get_retired_rule_ids, get_severity_weights --------------
 
 
 def test_get_active_rules_returns_only_active(store_path):
@@ -108,6 +108,22 @@ def test_get_active_rules_returns_only_active(store_path):
     codes = {r["RULE_CODE"] for r in active}
     assert "SITE-901" in codes
     assert "SITE-902" not in codes
+
+
+def test_get_retired_rule_ids(store_path):
+    retired_id = insert_rule(store_path, rule_code="SITE-903", status="RETIRED")
+    insert_rule(store_path, rule_code="SITE-904", status="ACTIVE")
+    store = DuckDBStore(store_path)
+
+    assert store.get_retired_rule_ids() == [retired_id]
+
+
+def test_get_severity_weights_matches_seeded_table(store_path):
+    store = DuckDBStore(store_path)
+
+    weights = store.get_severity_weights()
+
+    assert weights == {"CRITICAL": 5, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
 
 
 # --- runs -----------------------------------------------------------------------
@@ -145,6 +161,7 @@ def test_new_failure_inserts_open_finding(store_path):
     result = apply(store, rule_id, RUN_1, T1, [row])
 
     assert result.inserted == 1
+    assert result.row_statuses == ["OPEN"]
     finding_id = (
         duckdb.connect(str(store_path)).execute("SELECT FINDING_ID FROM DQ_FINDING").fetchone()[0]
     )
@@ -234,6 +251,7 @@ def test_set_exception_then_expire_goes_open_again(store_path):
     )
     result_2 = apply(store, rule_id, RUN_2, T2, [failing])
     assert result_2.disposition_applied == 1
+    assert result_2.row_statuses == ["ACCEPTED_EXCEPTION"]
     assert get_finding(store_path, finding_id)["STATUS"] == "ACCEPTED_EXCEPTION"
 
     # By run 3 the exception has expired -> back to OPEN.

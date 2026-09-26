@@ -7,7 +7,7 @@ so the store can be swapped for a SnowflakeStore if the PoC succeeds.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -27,7 +27,13 @@ class FindingInput:
 
 @dataclass(frozen=True)
 class ApplyFindingsResult:
-    """Counts of each lifecycle action taken by one apply_findings() call."""
+    """Counts of each lifecycle action taken by one apply_findings() call.
+
+    `row_statuses` gives each input row's resulting FINDING STATUS, in the
+    same order as the `rows` passed in -- for a failing row this is one of
+    OPEN / ACCEPTED_EXCEPTION / FALSE_POSITIVE, telling the caller whether
+    it should count as an *open* exception for scoring (brief §10.3).
+    """
 
     inserted: int = 0
     updated: int = 0
@@ -37,10 +43,15 @@ class ApplyFindingsResult:
     resolved_fixed: int = 0
     resolved_out_of_scope: int = 0
     no_change: int = 0
+    row_statuses: list[str | None] = field(default_factory=list)
 
 
 class GovernanceStore(Protocol):
     def get_active_rules(self) -> list[dict[str, Any]]: ...
+
+    def get_retired_rule_ids(self) -> list[int]: ...
+
+    def get_severity_weights(self) -> dict[str, int]: ...
 
     def start_run(
         self, run_id: str, run_type: str, triggered_by: str, started_at: datetime
