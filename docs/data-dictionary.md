@@ -26,6 +26,11 @@ see `docs/SETUP.md` step 1c. Field names below are Fivetran column names
 - **Site identifier** (used by SITE-004's duplicate check): `SITE_ID_C`.
   There are other candidate fields (`CUSTOMER_SITE_ID_C`,
   `HISTORICAL_SITE_ID_C`) not yet confirmed as wrong, just not chosen.
+- **Site ID finalised flag** (used by SITE-004 v2 and SITE-008):
+  `SITE_ID_FINALIZED_C` (`BOOLEAN`). While unset/false, `SITE_ID_C` is
+  provisional and duplicates or a slow finalisation aren't violations.
+- **Site record creation date** (used by SITE-008): `CREATED_DATE`
+  (`TIMESTAMP_TZ`), the Salesforce system field.
 - **Coordinates:** `SITETRACKER_LOCATION_LATITUDE_S` /
   `SITETRACKER_LOCATION_LONGITUDE_S` (`FLOAT`, decimal degrees). Prefer
   these over `SITETRACKER_LAT_C`/`SITETRACKER_LONG_C` (`VARCHAR`, likely
