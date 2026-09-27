@@ -1,10 +1,11 @@
 """Page 1 -- My rules (brief §10.6): the acting-as owner's rules, an
-editable form for DRAFT/NEEDS_CLARIFICATION rules, and Add rule.
+editable form for rules not yet ACTIVE, and Add rule.
 """
 
 from __future__ import annotations
 
 import getpass
+from collections import Counter
 
 import streamlit as st
 
@@ -26,6 +27,12 @@ st.subheader("Overview")
 if not all_rules:
     st.caption("No rules for this owner yet -- add one below.")
 else:
+    counts = Counter(r["STATUS"] for r in all_rules)
+    badges = "  ".join(
+        f"{ui.status_badge(status)}&nbsp;{count}" for status, count in counts.most_common()
+    )
+    st.markdown(badges, unsafe_allow_html=True)
+    st.write("")
     st.dataframe(
         [
             {
@@ -44,18 +51,35 @@ else:
         hide_index=True,
     )
 
-st.subheader("Edit a draft rule")
-editable = [r for r in all_rules if r["STATUS"] in ("DRAFT", "NEEDS_CLARIFICATION")]
+st.subheader("Edit a rule")
+editable = [
+    r for r in all_rules if r["STATUS"] in ("DRAFT", "NEEDS_CLARIFICATION", "READY_FOR_COMPILE")
+]
 
 if not editable:
     st.caption(
-        "No DRAFT or NEEDS_CLARIFICATION rules to edit here. A compiled-or-later "
-        "rule's statement can still be edited on the Rule detail page -- doing so "
-        "resets it to DRAFT."
+        "No DRAFT, NEEDS_CLARIFICATION or READY_FOR_COMPILE rules to edit here. A "
+        "compiled-or-later rule's statement can still be edited on the Rule detail "
+        "page -- doing so resets it to DRAFT."
     )
 else:
     selected_code = st.selectbox("Rule", [r["RULE_CODE"] for r in editable], key="edit_rule_code")
     rule = next(r for r in editable if r["RULE_CODE"] == selected_code)
+
+    ui.render_lifecycle_stepper(rule["STATUS"])
+    icon, message = ui.next_step_guidance(rule["STATUS"])
+    st.caption(f"{icon} {message}")
+
+    if rule["STATUS"] == "DRAFT":
+        if st.button("\U0001f4e4 Submit for compilation", key=f"submit_{selected_code}"):
+            rule_ops.submit_rule(
+                store,
+                selected_code,
+                changed_by=owner["OWNER_EMAIL"],
+                facilitated_by=getpass.getuser(),
+            )
+            st.success(f"{selected_code} submitted -- it's now queued for compilation.")
+            st.rerun()
 
     # Widget keys are scoped to selected_code so switching rules resets each
     # field to that rule's own value, instead of Streamlit preserving the

@@ -30,8 +30,26 @@ codes = [r["RULE_CODE"] for r in my_rules]
 selected_code = st.selectbox("Rule", codes)
 rule = store.get_rule(selected_code)
 
-st.caption(f"{rule['STATUS']} · v{rule['VERSION']} · {rule['TARGET_OBJECT']} / {rule['SCOPE']}")
+st.caption(f"v{rule['VERSION']} · {rule['TARGET_OBJECT']} / {rule['SCOPE']}")
 st.write(f"**Statement:** {rule['RULE_STATEMENT']}")
+
+ui.render_lifecycle_stepper(rule["STATUS"])
+if rule["STATUS"] != "RETIRED":  # the stepper already shows RETIRED's own banner
+    icon, message = ui.next_step_guidance(
+        rule["STATUS"], is_approver=bool(owner.get("IS_APPROVER"))
+    )
+    st.caption(f"{icon} {message}")
+
+if rule["STATUS"] == "DRAFT":
+    if st.button("\U0001f4e4 Submit for compilation", key=f"detail_submit_{selected_code}"):
+        rule_ops.submit_rule(
+            store,
+            selected_code,
+            changed_by=owner["OWNER_EMAIL"],
+            facilitated_by=getpass.getuser(),
+        )
+        st.success(f"{selected_code} submitted -- it's now queued for compilation.")
+        st.rerun()
 
 if rule["STATUS"] == "NEEDS_CLARIFICATION":
     st.subheader("Clarification needed")
