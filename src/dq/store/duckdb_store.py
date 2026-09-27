@@ -612,6 +612,8 @@ class DuckDBStore:
                 UPDATE DQ_RULE
                 SET CHECK_SQL = ?, CHECK_SQL_GENERATED_BY = ?, CHECK_SQL_GENERATED_AT = ?,
                     VALIDATION_RESULT = ?, STATUS = 'COMPILED', VERSION = VERSION + 1,
+                    OWNER_CONFIRMED_BY = NULL, OWNER_CONFIRMED_AT = NULL,
+                    SQL_APPROVED_BY = NULL, SQL_APPROVED_AT = NULL,
                     UPDATED_BY = ?, UPDATED_AT = current_timestamp
                 WHERE RULE_CODE = ?
                 """,

@@ -370,6 +370,31 @@ def test_approve_rule_unknown_code_raises(store_path):
         rule_ops.approve_rule(store, "NOPE-999", approved_by="kevin@connexa.co.nz")
 
 
+def test_recompiling_an_active_rule_clears_stale_confirmation_and_approval(store_path):
+    """A recompile (e.g. fixing SITE-004's SQL) must not leave a previous
+    version's confirm/approve stamped on a rule that's back to COMPILED --
+    otherwise `dq rule show` would misreport who signed off the new SQL."""
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status="COMPILED")
+    insert_owner(store_path, email="kevin@connexa.co.nz", is_approver=True)
+    store = DuckDBStore(store_path)
+    rule_ops.confirm_rule(store, "SITE-900", confirmed_by="kevin@connexa.co.nz")
+    rule_ops.approve_rule(store, "SITE-900", approved_by="kevin@connexa.co.nz")
+
+    updated = store.compile_rule(
+        "SITE-900",
+        check_sql="SELECT 2",
+        validation_result={"ok": True, "errors": []},
+        changed_by="kevin@connexa.co.nz",
+        generated_at=datetime(2026, 1, 1),
+    )
+
+    assert updated["STATUS"] == "COMPILED"
+    assert updated["OWNER_CONFIRMED_BY"] is None
+    assert updated["OWNER_CONFIRMED_AT"] is None
+    assert updated["SQL_APPROVED_BY"] is None
+    assert updated["SQL_APPROVED_AT"] is None
+
+
 # --- create_rule / update_rule / answer_clarification / reject_confirmation --------
 
 
