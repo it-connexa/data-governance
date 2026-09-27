@@ -1,12 +1,12 @@
 ---
-description: Compile DRAFT/answered-NEEDS_CLARIFICATION rules to CHECK_SQL, or ask a clarification question instead of guessing.
+description: Compile READY_FOR_COMPILE rules to CHECK_SQL, or ask a clarification question instead of guessing.
 ---
 
 Compile plain-English data governance rules into deterministic Snowflake `CHECK_SQL` (brief §10.8). Optional argument: a rule code (e.g. `SITE-005`) to compile just that one rule; with no argument, work through every eligible rule.
 
 ## 1. Find the work
 
-Run `uv run dq rule list --status DRAFT`. Also check `uv run dq rule list --status NEEDS_CLARIFICATION` for any rule whose `CLARIFICATION_ANSWER` is now filled in (an owner answered since it was last flagged) — those are eligible too.
+Run `uv run dq rule list --status READY_FOR_COMPILE`. A rule lands here either because the owner submitted a fresh `DRAFT` ("Submit for compilation" in the app), or because they answered a clarification question — both routes leave `CLARIFICATION_ANSWER` filled in when there was a question to answer.
 
 ## 2. Load context before writing any SQL
 
@@ -37,7 +37,7 @@ uv run dq rule set-sql <CODE> --file rules/sql/<CODE>.sql
 
 This lints, executes and validates against the real contract, and sets `STATUS = COMPILED` only on success — nothing is written to the rule if it fails.
 
-**On validation failure**, read the JSON output's `errors`, fix the SQL, and retry — up to 3 attempts. After 3 failed attempts, leave the rule as `DRAFT` and flag it in the summary (step 4) rather than continuing to guess.
+**On validation failure**, read the JSON output's `errors`, fix the SQL, and retry — up to 3 attempts. After 3 failed attempts, leave the rule as `READY_FOR_COMPILE` and flag it in the summary (step 4) rather than continuing to guess.
 
 ## Heuristics (brief §10.8)
 
@@ -51,7 +51,7 @@ This lints, executes and validates against the real contract, and sets `STATUS =
 
 ## 4. Summarise
 
-Report: rules compiled (with their codes), rules now needing clarification (with the question asked), and rules that failed validation after 3 attempts (with the last error). Don't guess past this — a failed rule stays `DRAFT` for the developer to look at.
+Report: rules compiled (with their codes), rules now needing clarification (with the question asked), and rules that failed validation after 3 attempts (with the last error). Don't guess past this — a failed rule stays `READY_FOR_COMPILE` for the developer to look at.
 
 ## 5. Handover
 

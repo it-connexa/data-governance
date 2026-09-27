@@ -900,11 +900,15 @@ class DuckDBStore:
     def answer_clarification(
         self, rule_code: str, answer: str, *, changed_by: str, facilitated_by: str | None = None
     ) -> dict[str, Any]:
+        """Answering re-queues the rule for compilation directly -- it's
+        the owner's signal that this is ready to try again, same as
+        `submit_rule` for a fresh DRAFT."""
         with self._connect() as con:
             con.execute(
                 """
                 UPDATE DQ_RULE
-                SET CLARIFICATION_ANSWER = ?, UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                SET CLARIFICATION_ANSWER = ?, STATUS = 'READY_FOR_COMPILE',
+                    UPDATED_BY = ?, UPDATED_AT = current_timestamp
                 WHERE RULE_CODE = ?
                 """,
                 [answer, changed_by, rule_code],
@@ -919,7 +923,39 @@ class DuckDBStore:
             rule_code=rule_code,
             version=updated["VERSION"],
             change_type="CLARIFICATION",
-            status_after=updated["STATUS"],
+            status_after="READY_FOR_COMPILE",
+            snapshot=updated,
+            changed_by=changed_by,
+            facilitated_by=facilitated_by,
+        )
+        return updated
+
+    def submit_rule(
+        self, rule_code: str, *, changed_by: str, facilitated_by: str | None = None
+    ) -> dict[str, Any]:
+        """DRAFT -> READY_FOR_COMPILE: the owner is done editing and wants
+        this picked up. Status is validated by the rule_ops caller, not
+        here (matching confirm_rule/approve_rule)."""
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET STATUS = 'READY_FOR_COMPILE', UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [changed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="SUBMITTED",
+            status_after="READY_FOR_COMPILE",
             snapshot=updated,
             changed_by=changed_by,
             facilitated_by=facilitated_by,

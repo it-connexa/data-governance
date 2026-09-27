@@ -316,7 +316,24 @@ def test_answer_clarification_sets_answer(store_path):
     )
 
     assert updated["CLARIFICATION_ANSWER"] == "Active means Operational status."
-    assert updated["STATUS"] == "NEEDS_CLARIFICATION"  # unchanged until recompiled
+    assert updated["STATUS"] == "READY_FOR_COMPILE"  # answering re-queues it for compilation
+
+
+def test_submit_rule_sets_ready_for_compile_and_records_history(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="DRAFT")
+    store = DuckDBStore(store_path)
+
+    updated = store.submit_rule("SITE-900", changed_by="owner@connexa.co.nz")
+
+    assert updated["STATUS"] == "READY_FOR_COMPILE"
+
+    con = duckdb.connect(str(store_path))
+    history = con.execute(
+        "SELECT CHANGE_TYPE, STATUS_AFTER FROM DQ_RULE_HISTORY WHERE RULE_CODE = 'SITE-900' "
+        "ORDER BY HISTORY_ID DESC LIMIT 1"
+    ).fetchone()
+    con.close()
+    assert history == ("SUBMITTED", "READY_FOR_COMPILE")
 
 
 def test_reject_confirmation_returns_to_draft_with_comment(store_path):

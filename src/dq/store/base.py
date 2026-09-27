@@ -199,6 +199,10 @@ class GovernanceStore(Protocol):
         self, rule_code: str, answer: str, *, changed_by: str, facilitated_by: str | None = None
     ) -> dict[str, Any]: ...
 
+    def submit_rule(
+        self, rule_code: str, *, changed_by: str, facilitated_by: str | None = None
+    ) -> dict[str, Any]: ...
+
     def reject_confirmation(
         self, rule_code: str, comment: str, *, changed_by: str, facilitated_by: str | None = None
     ) -> dict[str, Any]: ...

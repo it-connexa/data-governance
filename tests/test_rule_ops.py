@@ -462,6 +462,42 @@ def test_answer_clarification_unknown_code_raises(store_path):
         rule_ops.answer_clarification(store, "NOPE-999", "answer", changed_by="owner")
 
 
+def test_answer_clarification_moves_to_ready_for_compile(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="NEEDS_CLARIFICATION")
+    store = DuckDBStore(store_path)
+
+    updated = rule_ops.answer_clarification(
+        store, "SITE-900", "Only active sites count.", changed_by="owner@connexa.co.nz"
+    )
+
+    assert updated["STATUS"] == "READY_FOR_COMPILE"
+    assert updated["CLARIFICATION_ANSWER"] == "Only active sites count."
+
+
+def test_submit_rule_moves_draft_to_ready_for_compile(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="DRAFT")
+    store = DuckDBStore(store_path)
+
+    updated = rule_ops.submit_rule(store, "SITE-900", changed_by="owner@connexa.co.nz")
+
+    assert updated["STATUS"] == "READY_FOR_COMPILE"
+
+
+def test_submit_rule_rejects_wrong_starting_status(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="COMPILED", check_sql="SELECT 1")
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="not DRAFT"):
+        rule_ops.submit_rule(store, "SITE-900", changed_by="owner@connexa.co.nz")
+
+
+def test_submit_rule_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.submit_rule(store, "NOPE-999", changed_by="owner@connexa.co.nz")
+
+
 def test_reject_confirmation_requires_comment(store_path):
     insert_rule(store_path, rule_code="SITE-900", status="OWNER_CONFIRMED")
     store = DuckDBStore(store_path)

@@ -12,6 +12,7 @@
 --
 -- DuckDB can't add or drop CHECK constraints on an existing table, so
 -- only stable value sets are constrained. DOMAIN is deliberately open.
+-- Widening one of these sets later needs a migration -- see sql/migrations/.
 --
 -- Placeholders in <ANGLE_BRACKETS>: replace the owner emails before use
 -- (see setup steps), or update DQ_OWNER / DQ_RULE afterwards.
@@ -63,13 +64,17 @@ CREATE TABLE IF NOT EXISTS SOURCE_COLUMN (
 -- 2. Rule registry
 -- ---------------------------------------------------------------------
 -- Lifecycle:
---   DRAFT -> NEEDS_CLARIFICATION -> DRAFT (loop until clear)
---   DRAFT -> COMPILED            (SQL written and validated)
---   COMPILED -> OWNER_CONFIRMED  (owner previewed results and agreed)
---   OWNER_CONFIRMED -> ACTIVE    (approver reviewed SQL)
+--   DRAFT -> NEEDS_CLARIFICATION           (compiler flags an ambiguous term/scope)
+--   NEEDS_CLARIFICATION -> READY_FOR_COMPILE (owner answers)
+--   DRAFT -> READY_FOR_COMPILE             (owner submits)
+--   READY_FOR_COMPILE -> COMPILED          (SQL written and validated)
+--   COMPILED -> OWNER_CONFIRMED            (owner previewed results and agreed)
+--   OWNER_CONFIRMED -> ACTIVE              (approver reviewed SQL)
 --   any -> RETIRED
 -- Editing RULE_STATEMENT resets to DRAFT; editing CHECK_SQL resets to
--- COMPILED. Both increment VERSION and write DQ_RULE_HISTORY.
+-- COMPILED. Both increment VERSION and write DQ_RULE_HISTORY. A developer
+-- can also recompile straight from COMPILED/OWNER_CONFIRMED/ACTIVE without
+-- touching the statement (dq rule set-sql doesn't gate on status).
 
 CREATE TABLE IF NOT EXISTS DQ_RULE (
     RULE_ID                  INTEGER PRIMARY KEY DEFAULT nextval('SEQ_RULE_ID'),
@@ -87,7 +92,8 @@ CREATE TABLE IF NOT EXISTS DQ_RULE (
     OWNER_EMAIL              VARCHAR NOT NULL,
     STEWARD_EMAIL            VARCHAR,
     STATUS                   VARCHAR NOT NULL DEFAULT 'DRAFT' CHECK (STATUS IN
-                               ('DRAFT','NEEDS_CLARIFICATION','COMPILED','OWNER_CONFIRMED','ACTIVE','RETIRED')),
+                               ('DRAFT','NEEDS_CLARIFICATION','READY_FOR_COMPILE','COMPILED',
+                                'OWNER_CONFIRMED','ACTIVE','RETIRED')),
 
     CLARIFICATION_QUESTION   VARCHAR,
     CLARIFICATION_ANSWER     VARCHAR,
@@ -124,7 +130,7 @@ CREATE TABLE IF NOT EXISTS DQ_RULE_HISTORY (
     RULE_CODE       VARCHAR NOT NULL,
     VERSION         INTEGER NOT NULL,
     CHANGE_TYPE     VARCHAR NOT NULL CHECK (CHANGE_TYPE IN
-                      ('CREATED','STATEMENT_EDITED','CLARIFICATION','SQL_COMPILED','VALIDATED',
+                      ('CREATED','STATEMENT_EDITED','CLARIFICATION','SUBMITTED','SQL_COMPILED','VALIDATED',
                        'PREVIEWED','OWNER_CONFIRMED','OWNER_REJECTED','APPROVED','APPROVAL_REJECTED','RETIRED')),
     STATUS_AFTER    VARCHAR NOT NULL,
     SNAPSHOT        JSON NOT NULL,                 -- full DQ_RULE row after the change

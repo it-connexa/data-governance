@@ -285,6 +285,23 @@ def answer_clarification(
     )
 
 
+def submit_rule(
+    store: GovernanceStore,
+    rule_code: str,
+    *,
+    changed_by: str,
+    facilitated_by: str | None = None,
+) -> dict[str, Any]:
+    """DRAFT -> READY_FOR_COMPILE: the owner submits a finished statement
+    (brief §10.6 page 1's "Submit for compilation")."""
+    rule = store.get_rule(rule_code)
+    if rule is None:
+        raise RuleOpsError(f"Unknown rule code: {rule_code}")
+    if rule["STATUS"] != "DRAFT":
+        raise RuleOpsError(f"{rule_code} is {rule['STATUS']}, not DRAFT -- can't submit")
+    return store.submit_rule(rule_code, changed_by=changed_by, facilitated_by=facilitated_by)
+
+
 def reject_confirmation(
     store: GovernanceStore,
     rule_code: str,
