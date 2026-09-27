@@ -52,7 +52,12 @@ def make_table(rows: list[tuple[str, bool]]) -> pa.Table:
 
 
 def insert_rule(
-    store_path, *, rule_code: str, check_sql: str | None = None, status: str = "DRAFT"
+    store_path,
+    *,
+    rule_code: str,
+    check_sql: str | None = None,
+    status: str = "DRAFT",
+    target_object: str = "SITE",
 ) -> int:
     con = duckdb.connect(str(store_path))
     try:
@@ -61,10 +66,10 @@ def insert_rule(
             INSERT INTO DQ_RULE (
                 RULE_CODE, RULE_NAME, RULE_STATEMENT, DOMAIN, TARGET_OBJECT,
                 SCOPE, DIMENSION, SEVERITY, OWNER_EMAIL, STATUS, CHECK_SQL, CREATED_BY
-            ) VALUES (?, ?, 'stmt', 'SITE_MASTER', 'SITE', 'SITE', 'VALIDITY', 'HIGH',
+            ) VALUES (?, ?, 'stmt', 'SITE_MASTER', ?, 'SITE', 'VALIDITY', 'HIGH',
                       'owner@connexa.co.nz', ?, ?, 'test')
             """,
-            [rule_code, f"{rule_code} test rule", status, check_sql],
+            [rule_code, f"{rule_code} test rule", target_object, status, check_sql],
         )
         rule_id = con.execute(
             "SELECT RULE_ID FROM DQ_RULE WHERE RULE_CODE = ?", [rule_code]
@@ -546,6 +551,37 @@ def test_preview_rule_returns_sample_failing_rows(store_path, sources_config):
     row = result["sample"][0]
     assert row["record_id"] == "r2"
     assert row["record_url"].startswith("https://connexa.lightning.force.com/lightning/r/Site__c/")
+
+
+def test_preview_rule_milestone_domain_resolves_via_project_source(store_path, sources_config):
+    """TARGET_OBJECT=MILESTONE isn't a literal sources.yml key -- this must
+    resolve the deep link via PROJECT instead of raising KeyError (found
+    while previewing MS-001)."""
+    insert_rule(
+        store_path,
+        rule_code="MS-900",
+        target_object="MILESTONE",
+        check_sql="SELECT p.ID FROM {{ src.PROJECT }} p",
+    )
+    store = DuckDBStore(store_path)
+    store.compile_rule(
+        "MS-900",
+        check_sql="SELECT p.ID FROM {{ src.PROJECT }} p",
+        validation_result={"ok": True},
+        changed_by="kevin",
+        generated_at=datetime.now(),
+    )
+    executor = FakeExecutor()
+    executor.rule_tables["MS-900"] = make_table([("p1", False)])
+
+    result = rule_ops.preview_rule(
+        store, executor, sources_config, "MS-900", config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    assert result["ok"] is True
+    assert result["sample"][0]["record_url"] == (
+        "https://connexa.lightning.force.com/lightning/r/Project__c/p1/view"
+    )
 
 
 def test_preview_rule_persists_preview_counts(store_path, sources_config):

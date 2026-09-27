@@ -37,6 +37,23 @@ class LintError(Exception):
         super().__init__("; ".join(violations))
 
 
+# A rule's TARGET_OBJECT (brief §7's rule domain: SITE/PROJECT/MILESTONE) is
+# usually also a literal sources.yml source name, but milestones aren't their
+# own Salesforce object or a single Snowflake table -- they're columns on
+# project extension tables (MILESTONE_EXT/MILESTONE_EXT_2), so there's no
+# {{ src.MILESTONE }}. A milestone rule's RECORD_ID is always a project, so
+# OBJECT_TOTAL counts and deep-link sf_object lookups for it resolve to
+# PROJECT instead.
+_TARGET_OBJECT_SOURCE_OVERRIDES = {"MILESTONE": "PROJECT"}
+
+
+def resolve_target_source(target_object: str) -> str:
+    """The sources.yml source name to use for a rule's TARGET_OBJECT, for
+    OBJECT_TOTAL counts and RECORD_URL's sf_object -- not necessarily the
+    same string as TARGET_OBJECT itself (see _TARGET_OBJECT_SOURCE_OVERRIDES)."""
+    return _TARGET_OBJECT_SOURCE_OVERRIDES.get(target_object, target_object)
+
+
 @dataclass(frozen=True)
 class Source:
     table: str

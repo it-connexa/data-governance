@@ -19,7 +19,7 @@ import pyarrow as pa
 from dq import scoring
 from dq.contract import validate_result
 from dq.scoring import EvaluatedRow, SiteRuleRows
-from dq.sources import SourcesConfig, lint, render
+from dq.sources import SourcesConfig, lint, render, resolve_target_source
 from dq.store.base import FindingInput, GovernanceStore
 
 _ACTIVE_DISPOSITION_STATUSES = ("ACCEPTED_EXCEPTION", "FALSE_POSITIVE")
@@ -210,7 +210,8 @@ def _run_body(
 def _count_object(
     executor: RuleExecutor, sources_config: SourcesConfig, target: str, query_tag: str
 ) -> int:
-    sql = render(f"SELECT COUNT(*) FROM {{{{ src.{target} }}}}", sources_config)
+    source_name = resolve_target_source(target)
+    sql = render(f"SELECT COUNT(*) FROM {{{{ src.{source_name} }}}}", sources_config)
     return executor.count_object(target, sql, query_tag=query_tag)
 
 
@@ -267,7 +268,7 @@ def _run_one_rule(
         raise RuleRunError("; ".join(validation.errors))
 
     finding_inputs = _table_to_finding_inputs(exec_result.table)
-    sf_object = sources_config.sources[target].sf_object
+    sf_object = sources_config.sources[resolve_target_source(target)].sf_object
 
     apply_result = store.apply_findings(
         run_id=run_id,
@@ -369,7 +370,7 @@ def _write_object_rollups(
     for target, target_rules in rules_by_target.items():
         result = scoring.object_rollup(
             target_object=target,
-            record_label=sources_config.sources[target].record_label,
+            record_label=sources_config.sources[resolve_target_source(target)].record_label,
             object_total=object_totals.get(target),
             active_rules=len(target_rules),
             rules_succeeded=succeeded_by_object.get(target, 0),

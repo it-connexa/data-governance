@@ -19,7 +19,7 @@ import pyarrow as pa
 from dq.contract import ValidationResult, validate_result
 from dq.engine import EngineConfig, RuleExecutor
 from dq.lifecycle import build_record_url
-from dq.sources import LintError, SourcesConfig, lint, render
+from dq.sources import LintError, SourcesConfig, lint, render, resolve_target_source
 from dq.store.base import GovernanceStore
 
 _RULE_CODE_PREFIX_BY_OBJECT = {"SITE": "SITE", "PROJECT": "PRJ", "MILESTONE": "MS"}
@@ -354,7 +354,7 @@ def preview_rule(
     )
     validation = validate_result(exec_result.table, scope=rule["SCOPE"])
 
-    sf_object = sources_config.sources[rule["TARGET_OBJECT"]].sf_object
+    sf_object = sources_config.sources[resolve_target_source(rule["TARGET_OBJECT"])].sf_object
     sample = _sample_failing_rows(
         exec_result.table,
         sample_size=sample_size,

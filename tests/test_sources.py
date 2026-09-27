@@ -1,6 +1,13 @@
 import pytest
 
-from dq.sources import LintError, UnknownSourceError, lint, load_sources, render
+from dq.sources import (
+    LintError,
+    UnknownSourceError,
+    lint,
+    load_sources,
+    render,
+    resolve_target_source,
+)
 
 
 @pytest.fixture
@@ -194,3 +201,15 @@ def test_lint_allows_limit_in_subquery(config):
     # A LIMIT nested inside a derived table is not a top-level LIMIT.
     sql = "SELECT * FROM (SELECT * FROM {{ src.SITE }} ORDER BY ID LIMIT 10) t"
     lint(sql, config)
+
+
+# --- resolve_target_source (milestone rules resolve via PROJECT) --------------
+
+
+def test_resolve_target_source_passes_through_known_sources():
+    assert resolve_target_source("SITE") == "SITE"
+    assert resolve_target_source("PROJECT") == "PROJECT"
+
+
+def test_resolve_target_source_maps_milestone_to_project():
+    assert resolve_target_source("MILESTONE") == "PROJECT"

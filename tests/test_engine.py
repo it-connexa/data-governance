@@ -66,7 +66,15 @@ def make_table(rows: list[tuple[str, bool]]) -> pa.Table:
     )
 
 
-def insert_rule(store_path, *, rule_code: str, severity: str = "HIGH", scope: str = "SITE") -> int:
+def insert_rule(
+    store_path,
+    *,
+    rule_code: str,
+    severity: str = "HIGH",
+    scope: str = "SITE",
+    target_object: str = "SITE",
+    check_sql: str = "SELECT s.ID AS RECORD_ID FROM {{ src.SITE }} s",
+) -> int:
     con = duckdb.connect(str(store_path))
     try:
         con.execute(
@@ -75,11 +83,10 @@ def insert_rule(store_path, *, rule_code: str, severity: str = "HIGH", scope: st
                 RULE_CODE, RULE_NAME, RULE_STATEMENT, DOMAIN, TARGET_OBJECT,
                 RECORD_LABEL, SCOPE, DIMENSION, SEVERITY, OWNER_EMAIL, STATUS,
                 CHECK_SQL, CREATED_BY
-            ) VALUES (?, ?, 'stmt', 'SITE_MASTER', 'SITE', 'sites', ?, 'VALIDITY', ?,
-                      'owner@connexa.co.nz', 'ACTIVE',
-                      'SELECT s.ID AS RECORD_ID FROM {{ src.SITE }} s', 'test')
+            ) VALUES (?, ?, 'stmt', 'SITE_MASTER', ?, 'sites', ?, 'VALIDITY', ?,
+                      'owner@connexa.co.nz', 'ACTIVE', ?, 'test')
             """,
-            [rule_code, f"{rule_code} test rule", scope, severity],
+            [rule_code, f"{rule_code} test rule", target_object, scope, severity, check_sql],
         )
         rule_id = con.execute(
             "SELECT RULE_ID FROM DQ_RULE WHERE RULE_CODE = ?", [rule_code]
@@ -161,6 +168,38 @@ def test_run_creates_finding_and_object_result(store_path, sources_config):
     ).fetchone()
     con.close()
     assert obj == (3, 2, 1, 1)
+
+
+def test_milestone_domain_rule_resolves_via_project_source(store_path, sources_config):
+    """MILESTONE isn't a literal sources.yml key -- milestones live as
+    columns on project extension tables, not their own object -- so
+    OBJECT_TOTAL, sf_object and record_label must resolve via PROJECT
+    instead of raising KeyError/UnknownSourceError (found via MS-001)."""
+    insert_rule(
+        store_path,
+        rule_code="MS-900",
+        target_object="MILESTONE",
+        check_sql="SELECT p.ID AS RECORD_ID, p.NAME AS RECORD_NAME FROM {{ src.PROJECT }} p",
+    )
+    executor = FakeExecutor()
+    executor.object_totals["MILESTONE"] = 5
+    executor.rule_tables["MS-900"] = make_table([("p1", False), ("p2", True)])
+
+    summary = run_engine(store_path, sources_config, executor, RUN_1, T1)
+
+    assert summary.status == "SUCCEEDED"
+    assert get_finding_status(store_path, "p1") == "OPEN"
+
+    con = duckdb.connect(str(store_path))
+    obj = con.execute(
+        "SELECT OBJECT_TOTAL, RECORD_LABEL FROM DQ_OBJECT_RESULT WHERE RUN_ID = ?", [RUN_1]
+    ).fetchone()
+    record_url = con.execute(
+        "SELECT RECORD_URL FROM DQ_FINDING WHERE RECORD_ID = 'p1'"
+    ).fetchone()[0]
+    con.close()
+    assert obj == (5, "projects")
+    assert record_url == "https://connexa.lightning.force.com/lightning/r/Project__c/p1/view"
 
 
 # --- fix / break / disposition-expiry scenarios (brief §11) --------------------
