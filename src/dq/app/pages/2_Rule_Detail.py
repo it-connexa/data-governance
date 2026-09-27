@@ -11,6 +11,7 @@ import streamlit as st
 
 from dq import rule_ops
 from dq.app import context, ui
+from dq.sources import UnknownSourceError, render
 
 st.set_page_config(page_title="Rule detail", layout="wide")
 
@@ -69,6 +70,22 @@ if rule["STATUS"] == "NEEDS_CLARIFICATION":
 with st.expander("Compiled SQL", expanded=False):
     if rule.get("CHECK_SQL"):
         st.code(rule["CHECK_SQL"], language="sql")
+    else:
+        st.caption("Not compiled yet.")
+
+with st.expander("Rendered SQL (paste into Snowflake)", expanded=False):
+    if rule.get("CHECK_SQL"):
+        st.caption(
+            "The same SQL above with every `{{ src.NAME }}` swapped for its real "
+            "table -- exactly what runs when this rule executes. Paste straight "
+            "into a Snowflake worksheet to test it yourself. Don't save this "
+            "version back into rules/sql/ -- the placeholders are what keep the "
+            "rule portable if a table ever moves."
+        )
+        try:
+            st.code(render(rule["CHECK_SQL"], sources_config), language="sql")
+        except UnknownSourceError as exc:
+            st.error(f"Couldn't render this SQL: {exc}")
     else:
         st.caption("Not compiled yet.")
 
