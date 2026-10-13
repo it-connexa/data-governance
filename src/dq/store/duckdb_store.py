@@ -754,6 +754,54 @@ class DuckDBStore:
         )
         return updated
 
+    def retire_rule(
+        self, rule_code: str, reason: str, *, changed_by: str, facilitated_by: str | None = None
+    ) -> dict[str, Any]:
+        """Any compiled-or-later status -> RETIRED. Status/approver checks
+        live in rule_ops.retire_rule, matching confirm_rule/approve_rule."""
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE DQ_RULE
+                SET STATUS = 'RETIRED', RETIRED_REASON = ?,
+                    UPDATED_BY = ?, UPDATED_AT = current_timestamp
+                WHERE RULE_CODE = ?
+                """,
+                [reason, changed_by, rule_code],
+            )
+
+        updated = self.get_rule(rule_code)
+        if updated is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+
+        self.add_history(
+            rule_id=updated["RULE_ID"],
+            rule_code=rule_code,
+            version=updated["VERSION"],
+            change_type="RETIRED",
+            status_after="RETIRED",
+            snapshot=updated,
+            changed_by=changed_by,
+            facilitated_by=facilitated_by,
+            comment=reason,
+        )
+        return updated
+
+    def has_rule_run_history(self, rule_code: str) -> bool:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT 1 FROM DQ_RULE_RESULT WHERE RULE_CODE = ? LIMIT 1", [rule_code]
+            ).fetchone()
+            return row is not None
+
+    def delete_rule(self, rule_code: str) -> None:
+        """Hard-delete -- for an abandoned DRAFT idea only (enforced by
+        rule_ops.delete_rule), so there's nothing worth keeping an audit
+        trail of. Removes its own history rows too, not just the rule."""
+        with self._connect() as con:
+            con.execute("DELETE FROM DQ_RULE_HISTORY WHERE RULE_CODE = ?", [rule_code])
+            con.execute("DELETE FROM DQ_RULE WHERE RULE_CODE = ?", [rule_code])
+
     def get_owner(self, owner_email: str) -> dict[str, Any] | None:
         with self._connect() as con:
             cur = con.execute("SELECT * FROM DQ_OWNER WHERE OWNER_EMAIL = ?", [owner_email])

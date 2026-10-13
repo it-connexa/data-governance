@@ -202,7 +202,50 @@ def approve_rule(store: GovernanceStore, rule_code: str, *, approved_by: str) ->
     return store.approve_rule(rule_code, approved_by=approved_by)
 
 
-# --- Streamlit page 1: My rules (view, edit, add) ----------------------------------
+def retire_rule(
+    store: GovernanceStore,
+    rule_code: str,
+    reason: str,
+    *,
+    retired_by: str,
+    facilitated_by: str | None = None,
+) -> dict[str, Any]:
+    """COMPILED/OWNER_CONFIRMED/ACTIVE -> RETIRED: an approver pulls a rule
+    out of use with a reason (brief §10.6 page 3, approvers only)."""
+    if not reason or not reason.strip():
+        raise RuleOpsError("A reason is required to retire a rule")
+    rule = store.get_rule(rule_code)
+    if rule is None:
+        raise RuleOpsError(f"Unknown rule code: {rule_code}")
+    if rule["STATUS"] not in ("COMPILED", "OWNER_CONFIRMED", "ACTIVE"):
+        raise RuleOpsError(
+            f"{rule_code} is {rule['STATUS']} -- can only retire a compiled-or-later rule"
+        )
+
+    owner = store.get_owner(retired_by)
+    if owner is None or not owner["IS_APPROVER"]:
+        raise RuleOpsError(f"{retired_by} is not an approver")
+
+    return store.retire_rule(
+        rule_code, reason, changed_by=retired_by, facilitated_by=facilitated_by
+    )
+
+
+def delete_rule(store: GovernanceStore, rule_code: str) -> None:
+    """Hard-delete a DRAFT rule that's never been compiled or run -- an
+    abandoned idea, not a governance record. Refuses if it has ever
+    produced a real dq run result, however it got back to DRAFT since."""
+    rule = store.get_rule(rule_code)
+    if rule is None:
+        raise RuleOpsError(f"Unknown rule code: {rule_code}")
+    if rule["STATUS"] != "DRAFT":
+        raise RuleOpsError(f"{rule_code} is {rule['STATUS']}, not DRAFT -- can't delete")
+    if store.has_rule_run_history(rule_code):
+        raise RuleOpsError(f"{rule_code} has real run history -- retire it instead of deleting")
+    store.delete_rule(rule_code)
+
+
+# --- Streamlit page 1: Rule Catalogue (view, edit, add) -----------------------------
 
 
 def create_rule(

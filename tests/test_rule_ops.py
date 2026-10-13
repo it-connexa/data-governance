@@ -375,6 +375,104 @@ def test_approve_rule_unknown_code_raises(store_path):
         rule_ops.approve_rule(store, "NOPE-999", approved_by="kevin@connexa.co.nz")
 
 
+# --- retire_rule / delete_rule -------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", ["COMPILED", "OWNER_CONFIRMED", "ACTIVE"])
+def test_retire_rule_moves_compiled_or_later_to_retired(store_path, status):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status=status)
+    insert_owner(store_path, email="kevin@connexa.co.nz", is_approver=True)
+    store = DuckDBStore(store_path)
+
+    updated = rule_ops.retire_rule(
+        store, "SITE-900", "No longer needed", retired_by="kevin@connexa.co.nz"
+    )
+
+    assert updated["STATUS"] == "RETIRED"
+    assert updated["RETIRED_REASON"] == "No longer needed"
+
+
+def test_retire_rule_rejects_draft(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="DRAFT")
+    insert_owner(store_path, email="kevin@connexa.co.nz", is_approver=True)
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="can only retire a compiled-or-later rule"):
+        rule_ops.retire_rule(store, "SITE-900", "reason", retired_by="kevin@connexa.co.nz")
+
+
+def test_retire_rule_requires_reason(store_path):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status="ACTIVE")
+    insert_owner(store_path, email="kevin@connexa.co.nz", is_approver=True)
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="reason is required"):
+        rule_ops.retire_rule(store, "SITE-900", "   ", retired_by="kevin@connexa.co.nz")
+
+
+def test_retire_rule_rejects_non_approver(store_path):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status="ACTIVE")
+    insert_owner(store_path, email="jane@connexa.co.nz", is_approver=False)
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="not an approver"):
+        rule_ops.retire_rule(store, "SITE-900", "reason", retired_by="jane@connexa.co.nz")
+
+
+def test_retire_rule_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.retire_rule(store, "NOPE-999", "reason", retired_by="kevin@connexa.co.nz")
+
+
+def test_delete_rule_removes_draft_rule(store_path):
+    insert_rule(store_path, rule_code="SITE-900", status="DRAFT")
+    store = DuckDBStore(store_path)
+
+    rule_ops.delete_rule(store, "SITE-900")
+
+    assert store.get_rule("SITE-900") is None
+
+
+def test_delete_rule_rejects_non_draft(store_path):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1", status="COMPILED")
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="not DRAFT"):
+        rule_ops.delete_rule(store, "SITE-900")
+
+    assert store.get_rule("SITE-900") is not None
+
+
+def test_delete_rule_rejects_rule_with_run_history(store_path):
+    rule_id = insert_rule(store_path, rule_code="SITE-900", status="DRAFT")
+    con = duckdb.connect(str(store_path))
+    try:
+        con.execute(
+            """
+            INSERT INTO DQ_RULE_RESULT (RUN_ID, RULE_ID, RULE_CODE, RULE_VERSION, STATUS)
+            VALUES ('run-1', ?, 'SITE-900', 1, 'SUCCEEDED')
+            """,
+            [rule_id],
+        )
+    finally:
+        con.close()
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="real run history"):
+        rule_ops.delete_rule(store, "SITE-900")
+
+    assert store.get_rule("SITE-900") is not None
+
+
+def test_delete_rule_unknown_code_raises(store_path):
+    store = DuckDBStore(store_path)
+
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.delete_rule(store, "NOPE-999")
+
+
 def test_recompiling_an_active_rule_clears_stale_confirmation_and_approval(store_path):
     """A recompile (e.g. fixing SITE-004's SQL) must not leave a previous
     version's confirm/approve stamped on a rule that's back to COMPILED --
