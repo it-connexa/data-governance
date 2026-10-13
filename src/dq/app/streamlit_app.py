@@ -38,8 +38,12 @@ if owner is not None:
     )
 
 st.divider()
-st.page_link("pages/1_My_Rules.py", label="My rules — view, edit, add", icon=":material/list_alt:")
-st.page_link("pages/2_Rule_Detail.py", label="Rule detail & preview", icon=":material/search:")
+st.page_link(
+    "pages/1_Rule_Catalogue.py",
+    label="Rule Catalogue — browse, inspect, manage",
+    icon=":material/list_alt:",
+)
+st.page_link("pages/2_Add_Rule.py", label="Add a new rule", icon=":material/add_circle:")
 
 with st.expander("How a rule moves from an idea to a live check"):
     st.write(

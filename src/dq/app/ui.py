@@ -13,6 +13,15 @@ TARGET_OBJECTS = ["SITE", "PROJECT", "MILESTONE"]
 SCOPES = ["OBJECT", "SITE"]
 DIMENSIONS = ["COMPLETENESS", "VALIDITY", "CONSISTENCY", "TIMELINESS", "UNIQUENESS", "INTEGRITY"]
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+STATUSES = [
+    "DRAFT",
+    "NEEDS_CLARIFICATION",
+    "READY_FOR_COMPILE",
+    "COMPILED",
+    "OWNER_CONFIRMED",
+    "ACTIVE",
+    "RETIRED",
+]
 
 # --- Lifecycle stepper (brief §10.2 state machine, made visible to owners) --------
 
