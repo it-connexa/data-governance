@@ -44,6 +44,11 @@ st.page_link(
     icon=":material/list_alt:",
 )
 st.page_link("pages/2_Add_Rule.py", label="Add a new rule", icon=":material/add_circle:")
+st.page_link(
+    "pages/3_Findings.py",
+    label="Findings — review, accept or dismiss",
+    icon=":material/fact_check:",
+)
 
 with st.expander("How a rule moves from an idea to a live check"):
     st.write(

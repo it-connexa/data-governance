@@ -2,6 +2,8 @@
 and render_sidebar call st.* directly and are verified by running the app,
 never by pytest -- see the module docstring."""
 
+from datetime import UTC, datetime, timedelta
+
 from dq.app import ui
 
 
@@ -49,3 +51,53 @@ def test_next_step_guidance_owner_confirmed_differs_for_approver():
     _, approver_message = ui.next_step_guidance("OWNER_CONFIRMED", is_approver=True)
     assert "Approve" in approver_message
     assert "Approve" not in owner_message
+
+
+# --- NZ time and finding status labels ------------------------------------------------
+
+NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+
+def test_format_nz_shows_auckland_date():
+    # 11:30pm UTC on 14 Oct is already 15 Oct (NZDT, UTC+13) in Auckland.
+    assert ui.format_nz(datetime(2026, 10, 14, 23, 30, tzinfo=UTC)) == "15 Oct 2026"
+
+
+def test_format_nz_datetime_includes_time():
+    assert ui.format_nz_datetime(datetime(2026, 10, 14, 23, 30, tzinfo=UTC)) == (
+        "15 Oct 2026, 12:30 pm"
+    )
+
+
+def test_format_nz_handles_none():
+    assert ui.format_nz(None) == "—"
+    assert ui.format_nz_datetime(None) == "—"
+
+
+def test_finding_status_label_for_each_status():
+    assert ui.finding_status_label({"STATUS": "OPEN"}, now=NOW) == "Open"
+    assert ui.finding_status_label({"STATUS": "FALSE_POSITIVE"}, now=NOW) == "False positive"
+    assert (
+        ui.finding_status_label({"STATUS": "RESOLVED", "RESOLUTION_REASON": "FIXED"}, now=NOW)
+        == "Resolved (fixed)"
+    )
+    assert (
+        ui.finding_status_label(
+            {"STATUS": "RESOLVED", "RESOLUTION_REASON": "OUT_OF_SCOPE"}, now=NOW
+        )
+        == "Resolved (out of scope)"
+    )
+    assert (
+        ui.finding_status_label(
+            {"STATUS": "RESOLVED", "RESOLUTION_REASON": "RULE_RETIRED"}, now=NOW
+        )
+        == "Resolved (rule retired)"
+    )
+
+
+def test_finding_status_label_for_accepted_exception_shows_expiry_or_lapse():
+    live = {"STATUS": "ACCEPTED_EXCEPTION", "DISPOSITION_EXPIRES_AT": NOW + timedelta(days=40)}
+    lapsed = {"STATUS": "ACCEPTED_EXCEPTION", "DISPOSITION_EXPIRES_AT": NOW - timedelta(days=1)}
+
+    assert ui.finding_status_label(live, now=NOW) == "Accepted until 12 Jul 2026"
+    assert ui.finding_status_label(lapsed, now=NOW) == "Accepted — lapsed, reopens next run"

@@ -12,7 +12,7 @@ from collections import Counter
 
 import streamlit as st
 
-from dq import rule_ops
+from dq import finding_ops, rule_ops
 from dq.app import context, ui
 from dq.sources import UnknownSourceError, render
 
@@ -39,6 +39,7 @@ def _rerun_after_action() -> None:
     matches the current filters)."""
     st.session_state["_table_epoch"] = st.session_state.get("_table_epoch", 0) + 1
     st.rerun()
+
 
 all_rules = [r for r in store.list_rules() if r["OWNER_EMAIL"] == owner["OWNER_EMAIL"]]
 
@@ -103,6 +104,7 @@ filtered = [r for r in all_rules if _matches(r)]
 st.caption(f"{len(filtered)} of {len(all_rules)} rules")
 
 st.session_state.setdefault("_table_epoch", 0)
+flagged_rules = store.list_rules_flagged_for_review()
 
 if not filtered:
     st.info("No rules match the current filters.")
@@ -143,9 +145,7 @@ else:
             if position is None:
                 st.session_state.pop("selected_rule_code", None)
             else:
-                st.session_state[table_key] = {
-                    "selection": {"rows": [position], "columns": []}
-                }
+                st.session_state[table_key] = {"selection": {"rows": [position], "columns": []}}
 
     event = st.dataframe(
         [
@@ -158,10 +158,11 @@ else:
                 "Dimension": r["DIMENSION"],
                 "Severity": r["SEVERITY"],
                 "Version": r["VERSION"],
+                "Review": "\U0001f6a9 Flagged" if r["RULE_CODE"] in flagged_rules else "",
             }
             for r in filtered
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",
@@ -198,6 +199,38 @@ is_approver = bool(owner.get("IS_APPROVER"))
 if rule["STATUS"] != "RETIRED":  # the stepper already shows RETIRED's own banner
     icon, message = ui.next_step_guidance(rule["STATUS"], is_approver=is_approver)
     st.caption(f"{icon} {message}")
+
+review_flag = store.get_rule_review_flag(selected_code)
+if review_flag:
+    st.warning(
+        f"\U0001f6a9 **Flagged for review** by {review_flag['FLAGGED_BY']} on "
+        f"{ui.format_nz(review_flag['FLAGGED_AT'])}: {review_flag['REASON']}  \n"
+        "Recompiling or editing the statement closes the flag, or clear it once it's been "
+        "looked at."
+    )
+    if st.button("Clear flag", key=f"clear_flag_{selected_code}"):
+        try:
+            finding_ops.clear_review_flag(
+                store, selected_code, owner=owner, facilitated_by=getpass.getuser()
+            )
+        except finding_ops.FindingOpsError as exc:
+            st.error(str(exc))
+        else:
+            st.rerun()
+
+finding_counts = store.count_findings_by_status(selected_code)
+if finding_counts:
+    open_count = finding_counts.get("OPEN", 0)
+    total_count = sum(finding_counts.values())
+    findings_col1, findings_col2 = st.columns([3, 1], vertical_alignment="center")
+    with findings_col1:
+        st.caption(
+            f"\U0001f50e {open_count:,} open of {total_count:,} findings raised by this rule."
+        )
+    with findings_col2:
+        if st.button("View findings", key=f"view_findings_{selected_code}"):
+            st.session_state["_findings_jump_rule"] = selected_code
+            st.switch_page("pages/3_Findings.py")
 
 # --- Manage this rule: every lifecycle action lives here, together -------------
 
@@ -313,6 +346,8 @@ if rule["STATUS"] in ("COMPILED", "OWNER_CONFIRMED", "ACTIVE") and is_approver:
 
 if rule["STATUS"] in ("READY_FOR_COMPILE", "RETIRED"):
     st.caption("Nothing to do here right now.")
+elif rule["STATUS"] in ("COMPILED", "OWNER_CONFIRMED", "ACTIVE") and not is_approver:
+    st.caption("Only an approver can retire this rule.")
 
 # --- Rule details: read-only / editable field block ----------------------------
 
@@ -392,9 +427,7 @@ else:
     # field to that rule's own value, instead of Streamlit preserving the
     # previously-selected rule's edited (or default) value under a reused key.
     with st.form(f"edit_form_{selected_code}"):
-        rule_name = st.text_input(
-            "Name", value=rule["RULE_NAME"], key=f"edit_name_{selected_code}"
-        )
+        rule_name = st.text_input("Name", value=rule["RULE_NAME"], key=f"edit_name_{selected_code}")
         statement = st.text_area(
             "Statement",
             value=rule["RULE_STATEMENT"],

@@ -4,9 +4,14 @@ by running the app itself against a temp store, never by pytest.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
 import streamlit as st
 
 from dq.store.base import GovernanceStore
+
+NZ_TZ = ZoneInfo("Pacific/Auckland")
 
 DOMAINS = ["SITE_MASTER", "PROJECT_MILESTONE", "CROSS_DOMAIN"]
 TARGET_OBJECTS = ["SITE", "PROJECT", "MILESTONE"]
@@ -65,7 +70,7 @@ def status_badge(status: str) -> str:
     label = _STATUS_LABELS.get(status, status)
     return (
         f'<span style="background:{color}22;color:{color};border:1px solid {color}66;'
-        f'border-radius:999px;padding:1px 10px;font-size:0.78rem;font-weight:600;'
+        f"border-radius:999px;padding:1px 10px;font-size:0.78rem;font-weight:600;"
         f'white-space:nowrap;">{label}</span>'
     )
 
@@ -185,9 +190,7 @@ def render_sidebar(store: GovernanceStore) -> dict | None:
             if o["OWNER_EMAIL"] == previous["OWNER_EMAIL"]:
                 default_index = i
                 break
-    choice = st.sidebar.selectbox(
-        "Acting as", labels, index=default_index, key="acting_as_label"
-    )
+    choice = st.sidebar.selectbox("Acting as", labels, index=default_index, key="acting_as_label")
     chosen = owners[labels.index(choice)]
     st.session_state["acting_as"] = chosen
     st.sidebar.info(f"Facilitated session — acting as **{chosen['DISPLAY_NAME']}**")
@@ -201,3 +204,50 @@ def select_index(options: list[str], value: str | None, default: int = 0) -> int
         return options.index(value) if value is not None else default
     except ValueError:
         return default
+
+
+# --- Display helpers (pure; timestamps are stored UTC, shown in NZ time) ---------------
+
+
+def format_nz(value: datetime | None) -> str:
+    """A date in Pacific/Auckland, e.g. "15 Oct 2026"."""
+    if value is None:
+        return "—"
+    return value.astimezone(NZ_TZ).strftime("%d %b %Y").lstrip("0")
+
+
+def format_nz_datetime(value: datetime | None) -> str:
+    """A date and 12-hour time in Pacific/Auckland, e.g. "15 Oct 2026, 12:30 pm"."""
+    if value is None:
+        return "—"
+    local = value.astimezone(NZ_TZ)
+    clock = local.strftime("%I:%M %p").lstrip("0").lower()
+    return f"{local.strftime('%d %b %Y').lstrip('0')}, {clock}"
+
+
+_RESOLUTION_LABELS = {
+    "FIXED": "fixed",
+    "OUT_OF_SCOPE": "out of scope",
+    "RULE_RETIRED": "rule retired",
+}
+
+
+def finding_status_label(finding: dict, *, now: datetime | None = None) -> str:
+    """Plain-words status for a finding row -- an accepted exception carries
+    its expiry, since that's what an owner needs to see at a glance."""
+    status = finding["STATUS"]
+    if status == "OPEN":
+        return "Open"
+    if status == "FALSE_POSITIVE":
+        return "False positive"
+    if status == "RESOLVED":
+        reason = _RESOLUTION_LABELS.get(finding.get("RESOLUTION_REASON") or "")
+        return f"Resolved ({reason})" if reason else "Resolved"
+    if status == "ACCEPTED_EXCEPTION":
+        expires_at = finding.get("DISPOSITION_EXPIRES_AT")
+        if expires_at is None:
+            return "Accepted exception"
+        if expires_at <= (now or datetime.now(UTC)):
+            return "Accepted — lapsed, reopens next run"
+        return f"Accepted until {format_nz(expires_at)}"
+    return status
