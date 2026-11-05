@@ -94,6 +94,7 @@ if not all_findings:
         "No findings yet. They appear after the first run of your active rules — "
         "run `dq run`, or use **Run checks now** on the Run results page."
     )
+    st.page_link("pages/4_Run_Results.py", label="Go to Run results", icon=":material/monitoring:")
     st.stop()
 
 summary = finding_ops.summarise(all_findings)

@@ -101,3 +101,39 @@ def test_finding_status_label_for_accepted_exception_shows_expiry_or_lapse():
 
     assert ui.finding_status_label(live, now=NOW) == "Accepted until 12 Jul 2026"
     assert ui.finding_status_label(lapsed, now=NOW) == "Accepted — lapsed, reopens next run"
+
+
+# --- run results helpers ----------------------------------------------------------------
+
+
+def test_format_age_in_plain_words():
+    assert ui.format_age(NOW - timedelta(seconds=20), now=NOW) == "just now"
+    assert ui.format_age(NOW - timedelta(minutes=1), now=NOW) == "1 minute ago"
+    assert ui.format_age(NOW - timedelta(minutes=45), now=NOW) == "45 minutes ago"
+    assert ui.format_age(NOW - timedelta(hours=1), now=NOW) == "1 hour ago"
+    assert ui.format_age(NOW - timedelta(hours=5), now=NOW) == "5 hours ago"
+    assert ui.format_age(NOW - timedelta(days=1), now=NOW) == "1 day ago"
+    assert ui.format_age(NOW - timedelta(days=9), now=NOW) == "9 days ago"
+    assert ui.format_age(None, now=NOW) == "never"
+
+
+def test_format_duration():
+    start = NOW
+    assert ui.format_duration(start, start + timedelta(seconds=42)) == "42 s"
+    assert ui.format_duration(start, start + timedelta(seconds=192)) == "3 min 12 s"
+    assert ui.format_duration(start, start + timedelta(seconds=3600)) == "60 min 0 s"
+    assert ui.format_duration(start, None) == "—"
+
+
+def test_change_label_shows_direction_and_size():
+    assert ui.change_label(5, 3) == "▼ 2"
+    assert ui.change_label(3, 5) == "▲ 2"
+    assert ui.change_label(4, 4) == "no change"
+    assert ui.change_label(None, 4) == "first run"
+
+
+def test_run_status_badge_has_label_and_colour():
+    html = ui.run_status_badge("PARTIAL")
+    assert "Partial" in html
+    assert ui._RUN_STATUS_COLORS["PARTIAL"] in html
+    assert "SOMETHING" in ui.run_status_badge("SOMETHING")

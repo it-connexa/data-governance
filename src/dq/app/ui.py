@@ -251,3 +251,69 @@ def finding_status_label(finding: dict, *, now: datetime | None = None) -> str:
             return "Accepted — lapsed, reopens next run"
         return f"Accepted until {format_nz(expires_at)}"
     return status
+
+
+# --- Run results helpers (pure) ----------------------------------------------------------
+
+_RUN_STATUS_COLORS = {
+    "SUCCEEDED": "#16a34a",
+    "PARTIAL": "#d97706",
+    "FAILED": "#dc2626",
+    "RUNNING": "#3b82f6",
+}
+_RUN_STATUS_LABELS = {
+    "SUCCEEDED": "Succeeded",
+    "PARTIAL": "Partial",
+    "FAILED": "Failed",
+    "RUNNING": "Running",
+}
+
+
+def run_status_badge(status: str) -> str:
+    """A small HTML pill for a run's status, like status_badge for rules."""
+    color = _RUN_STATUS_COLORS.get(status, _FUTURE_COLOR)
+    label = _RUN_STATUS_LABELS.get(status, status)
+    return (
+        f'<span style="background:{color}22;color:{color};border:1px solid {color}66;'
+        f"border-radius:999px;padding:1px 10px;font-size:0.78rem;font-weight:600;"
+        f'white-space:nowrap;">{label}</span>'
+    )
+
+
+def _plural(n: int, unit: str) -> str:
+    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
+
+
+def format_age(value: datetime | None, *, now: datetime | None = None) -> str:
+    """ "5 hours ago" -- for how fresh a source sync or a run is."""
+    if value is None:
+        return "never"
+    seconds = int(((now or datetime.now(UTC)) - value).total_seconds())
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{_plural(seconds // 60, 'minute')} ago"
+    if seconds < 86400:
+        return f"{_plural(seconds // 3600, 'hour')} ago"
+    return f"{_plural(seconds // 86400, 'day')} ago"
+
+
+def format_duration(start: datetime | None, end: datetime | None) -> str:
+    if start is None or end is None:
+        return "—"
+    seconds = int((end - start).total_seconds())
+    if seconds < 60:
+        return f"{seconds} s"
+    return f"{seconds // 60} min {seconds % 60} s"
+
+
+def change_label(previous: int | None, current: int) -> str:
+    """Change in a count since the previous run. Down is the good direction
+    for exceptions, but this only reports it -- colour is the caller's call."""
+    if previous is None:
+        return "first run"
+    if current < previous:
+        return f"▼ {previous - current}"
+    if current > previous:
+        return f"▲ {current - previous}"
+    return "no change"

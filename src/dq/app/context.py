@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dq.engine import EngineConfig
 from dq.settings import Settings, load_settings
-from dq.snowflake_client import SnowflakeClient, SnowflakeExecutor
+from dq.snowflake_client import SnowflakeClient, SnowflakeCompleter, SnowflakeExecutor
 from dq.sources import SourcesConfig, load_sources
 from dq.store.base import GovernanceStore
 from dq.store.duckdb_store import DuckDBStore
@@ -34,6 +34,10 @@ def load_context() -> tuple[Settings, GovernanceStore, SourcesConfig]:
 
 def make_executor(settings: Settings) -> SnowflakeExecutor:
     return SnowflakeExecutor(SnowflakeClient(settings))
+
+
+def make_completer(settings: Settings) -> SnowflakeCompleter:
+    return SnowflakeCompleter(SnowflakeClient(settings))
 
 
 def engine_config(store: GovernanceStore) -> EngineConfig:
