@@ -44,13 +44,21 @@ class SnowflakeClient:
         )
 
     def execute(
-        self, sql: str, *, query_tag: str, timeout_seconds: int | None = None
+        self,
+        sql: str,
+        *,
+        query_tag: str,
+        timeout_seconds: int | None = None,
+        params: dict[str, Any] | None = None,
     ) -> ExecutionResult:
         connection = self._connect(query_tag=query_tag, timeout_seconds=timeout_seconds)
         try:
             cursor = connection.cursor()
             started = time.monotonic()
-            cursor.execute(sql)
+            if params is None:
+                cursor.execute(sql)
+            else:
+                cursor.execute(sql, params)
             table = cursor.fetch_arrow_all()
             duration_ms = int((time.monotonic() - started) * 1000)
             return ExecutionResult(table=table, query_id=cursor.sfqid, duration_ms=duration_ms)
@@ -75,4 +83,21 @@ class SnowflakeExecutor:
 
     def scalar(self, label: str, sql: str, *, query_tag: str) -> Any:
         result = self._client.execute(sql, query_tag=query_tag)
+        return result.table.column(0)[0].as_py()
+
+
+class SnowflakeCompleter:
+    """Adapts SnowflakeClient to narratives.NarrativeCompleter: one Cortex
+    COMPLETE call per narrative, model and prompt passed as bound
+    parameters -- never interpolated into the SQL text (brief §10.4)."""
+
+    def __init__(self, client: SnowflakeClient):
+        self._client = client
+
+    def complete(self, model: str, prompt: str, *, query_tag: str) -> str:
+        result = self._client.execute(
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE(%(model)s, %(prompt)s)",
+            query_tag=query_tag,
+            params={"model": model, "prompt": prompt},
+        )
         return result.table.column(0)[0].as_py()

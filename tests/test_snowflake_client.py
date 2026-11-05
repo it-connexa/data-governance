@@ -8,7 +8,7 @@ import pyarrow as pa
 import pytest
 
 from dq.settings import PathSettings, Settings, SnowflakeSettings
-from dq.snowflake_client import SnowflakeClient, SnowflakeExecutor
+from dq.snowflake_client import SnowflakeClient, SnowflakeCompleter, SnowflakeExecutor
 
 
 @pytest.fixture
@@ -37,8 +37,9 @@ class FakeCursor:
         self.sfqid = query_id
         self.executed: list[str] = []
 
-    def execute(self, sql):
+    def execute(self, sql, params=None):
         self.executed.append(sql)
+        self.params = params
         return self
 
     def fetch_arrow_all(self):
@@ -164,3 +165,36 @@ def test_snowflake_executor_scalar_returns_arbitrary_value(settings, monkeypatch
     value = executor.scalar("SITE", "SELECT MAX(_FIVETRAN_SYNCED) FROM x", query_tag="dq_poc:run:1")
 
     assert value == dt.datetime(2026, 9, 27, 3, 0, 0)
+
+
+# --- bound parameters and the Cortex completer ---------------------------------
+
+
+def test_execute_binds_parameters_when_given(settings, monkeypatch):
+    client, _, connection = make_client(settings, sample_table(), monkeypatch)
+
+    client.execute("SELECT %(x)s", query_tag="dq_poc:test:abc", params={"x": 7})
+
+    assert connection.cursor().params == {"x": 7}
+
+
+def test_execute_without_parameters_leaves_the_cursor_call_unchanged(settings, monkeypatch):
+    client, _, connection = make_client(settings, sample_table(), monkeypatch)
+
+    client.execute("SELECT 1", query_tag="dq_poc:test:abc")
+
+    assert connection.cursor().params is None
+
+
+def test_completer_calls_cortex_with_bound_model_and_prompt(settings, monkeypatch):
+    table = pa.table({"R": pa.array(["A short narrative."])})
+    client, _, connection = make_client(settings, table, monkeypatch)
+    completer = SnowflakeCompleter(client)
+    prompt = "Summarise; it's got 'quotes' and %(odd)s tokens in it"
+
+    text = completer.complete("llama3.1-70b", prompt, query_tag="dq_poc:narrative:r1")
+
+    assert text == "A short narrative."
+    cursor = connection.cursor()
+    assert cursor.executed == ["SELECT SNOWFLAKE.CORTEX.COMPLETE(%(model)s, %(prompt)s)"]
+    assert cursor.params == {"model": "llama3.1-70b", "prompt": prompt}  # never in the SQL text

@@ -20,7 +20,7 @@ import typer
 from dq import catalogue, engine, rule_ops
 from dq.engine import EngineConfig
 from dq.settings import SettingsError, load_settings
-from dq.snowflake_client import SnowflakeClient, SnowflakeExecutor
+from dq.snowflake_client import SnowflakeClient, SnowflakeCompleter, SnowflakeExecutor
 from dq.sources import SourcesConfig, load_sources
 from dq.store.base import GovernanceStore
 from dq.store.duckdb_store import DuckDBStore
@@ -54,6 +54,14 @@ def _make_executor() -> SnowflakeExecutor:
     except SettingsError as exc:
         _fail(str(exc))
     return SnowflakeExecutor(SnowflakeClient(settings))
+
+
+def _make_completer() -> SnowflakeCompleter:
+    try:
+        settings = load_settings()
+    except SettingsError as exc:
+        _fail(str(exc))
+    return SnowflakeCompleter(SnowflakeClient(settings))
 
 
 def _engine_config(store: GovernanceStore) -> EngineConfig:
@@ -232,10 +240,15 @@ def run(
     manual: Annotated[
         bool, typer.Option("--manual", help="Mark this as a manually triggered run")
     ] = False,
+    no_narratives: Annotated[
+        bool,
+        typer.Option("--no-narratives", help="Skip the Cortex owner narratives after the run"),
+    ] = False,
 ) -> None:
     """Full engine run (brief §10.1): render, lint, execute and validate
     every ACTIVE rule, apply the finding lifecycle, score sites and write
-    object rollups. Writes the governance store; never prints row data."""
+    object rollups, then a Cortex narrative per owner (unless --no-narratives).
+    Writes the governance store; never prints row data."""
     store, sources_config = _load_store_and_sources()
     executor = _make_executor()
     config = _engine_config(store)
@@ -253,6 +266,7 @@ def run(
         triggered_by=getpass.getuser(),
         started_at=datetime.now(UTC),
         source_freshness=freshness,
+        narrator=None if no_narratives else _make_completer(),
     )
 
     _print_json(

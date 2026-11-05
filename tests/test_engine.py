@@ -194,9 +194,9 @@ def test_milestone_domain_rule_resolves_via_project_source(store_path, sources_c
     obj = con.execute(
         "SELECT OBJECT_TOTAL, RECORD_LABEL FROM DQ_OBJECT_RESULT WHERE RUN_ID = ?", [RUN_1]
     ).fetchone()
-    record_url = con.execute(
-        "SELECT RECORD_URL FROM DQ_FINDING WHERE RECORD_ID = 'p1'"
-    ).fetchone()[0]
+    record_url = con.execute("SELECT RECORD_URL FROM DQ_FINDING WHERE RECORD_ID = 'p1'").fetchone()[
+        0
+    ]
     con.close()
     assert obj == (5, "projects")
     assert record_url == "https://connexa.lightning.force.com/lightning/r/Project__c/p1/view"
@@ -393,3 +393,122 @@ def test_collect_source_freshness_renders_all_sources(sources_config):
     freshness = engine.collect_source_freshness(executor, sources_config, query_tag="dq_poc:run:1")
 
     assert set(freshness) == set(sources_config.sources)
+
+
+# --- narratives hook (brief §10.1 step 6) ----------------------------------------
+
+
+class FakeNarrator:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls: list[str] = []
+
+    def complete(self, model, prompt, *, query_tag):
+        self.calls.append(prompt)
+        if self.error:
+            raise self.error
+        return "A narrative."
+
+
+def enable_narratives(store_path, owner_email: str = "owner@connexa.co.nz") -> None:
+    con = duckdb.connect(str(store_path))
+    try:
+        con.execute(
+            "INSERT INTO DQ_OWNER (OWNER_EMAIL, DISPLAY_NAME, DOMAINS, IS_APPROVER) "
+            "VALUES (?, 'Owner', ['SITE_MASTER'], FALSE)",
+            [owner_email],
+        )
+        con.execute(
+            "UPDATE DQ_CONFIG SET CONFIG_VALUE = 'test-model' WHERE CONFIG_KEY = 'CORTEX_MODEL'"
+        )
+    finally:
+        con.close()
+
+
+def run_engine_with_narrator(store_path, sources_config, executor, narrator):
+    return engine.run(
+        store=DuckDBStore(store_path),
+        executor=executor,
+        sources_config=sources_config,
+        config=CONFIG,
+        run_id=RUN_1,
+        run_type="MANUAL",
+        triggered_by="kevin",
+        started_at=T1,
+        narrator=narrator,
+    )
+
+
+def test_run_with_a_narrator_stores_a_narrative_for_the_owner(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900")
+    enable_narratives(store_path)
+    executor = FakeExecutor()
+    executor.object_totals["SITE"] = 2
+    executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
+    narrator = FakeNarrator()
+
+    summary = run_engine_with_narrator(store_path, sources_config, executor, narrator)
+
+    assert summary.status == "SUCCEEDED"
+    assert len(narrator.calls) == 1
+    stored = DuckDBStore(store_path).get_latest_narrative("owner@connexa.co.nz")
+    assert stored["STATUS"] == "SUCCEEDED"
+    assert stored["RUN_ID"] == RUN_1
+    assert "SITE-900" in stored["INPUT_SUMMARY"]
+
+
+def test_a_failing_narrator_never_fails_the_run(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900")
+    enable_narratives(store_path)
+    executor = FakeExecutor()
+    executor.object_totals["SITE"] = 2
+    executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
+
+    summary = run_engine_with_narrator(
+        store_path, sources_config, executor, FakeNarrator(error=RuntimeError("cortex down"))
+    )
+
+    assert summary.status == "SUCCEEDED"
+    stored = DuckDBStore(store_path).get_latest_narrative("owner@connexa.co.nz")
+    assert stored["STATUS"] == "ERRORED"
+    assert "cortex down" in stored["ERROR_MESSAGE"]
+
+
+def test_run_without_a_narrator_writes_no_narrative(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900")
+    enable_narratives(store_path)
+    executor = FakeExecutor()
+    executor.object_totals["SITE"] = 2
+    executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
+
+    run_engine_with_narrator(store_path, sources_config, executor, None)
+
+    assert DuckDBStore(store_path).get_latest_narrative("owner@connexa.co.nz") is None
+
+
+def test_no_narratives_when_the_run_itself_fails(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900")
+    enable_narratives(store_path)
+
+    class BrokenExecutor(FakeExecutor):
+        def count_object(self, target_object, sql, *, query_tag):
+            raise RuntimeError("warehouse unavailable")
+
+    narrator = FakeNarrator()
+    summary = run_engine_with_narrator(store_path, sources_config, BrokenExecutor(), narrator)
+
+    assert summary.status == "FAILED"
+    assert narrator.calls == []
+
+
+def test_site_scores_store_the_site_name(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900", scope="SITE", severity="HIGH")
+    executor = FakeExecutor()
+    executor.rule_tables["SITE-900"] = make_table([("r1", False)])  # SITE_NAME == record id
+
+    run_engine(store_path, sources_config, executor, RUN_1, T1)
+
+    con = duckdb.connect(str(store_path))
+    names = con.execute("SELECT SITE_NAME FROM DQ_SITE_SCORE WHERE RUN_ID = ?", [RUN_1]).fetchall()
+    con.close()
+    assert names == [("r1",)]

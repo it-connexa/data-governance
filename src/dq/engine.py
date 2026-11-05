@@ -9,6 +9,7 @@ talks to Snowflake or DuckDB directly.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,11 +17,14 @@ from typing import Any, Protocol
 
 import pyarrow as pa
 
-from dq import scoring
+from dq import narratives, scoring
 from dq.contract import validate_result
+from dq.narratives import NarrativeCompleter
 from dq.scoring import EvaluatedRow, SiteRuleRows
 from dq.sources import SourcesConfig, lint, render, resolve_target_source
 from dq.store.base import FindingInput, GovernanceStore
+
+logger = logging.getLogger(__name__)
 
 _ACTIVE_DISPOSITION_STATUSES = ("ACCEPTED_EXCEPTION", "FALSE_POSITIVE")
 
@@ -76,6 +80,7 @@ def run(
     started_at: datetime,
     finished_at: datetime | None = None,
     source_freshness: dict[str, datetime | None] | None = None,
+    narrator: NarrativeCompleter | None = None,
 ) -> RunSummary:
     store.start_run(run_id, run_type, triggered_by, started_at)
 
@@ -119,7 +124,19 @@ def run(
         engine_version=config.engine_version,
         snowflake_query_tag=f"dq_poc:run:{run_id}",
     )
+    if narrator is not None:
+        _generate_narratives(store, narrator, run_id)
     return summary
+
+
+def _generate_narratives(store: GovernanceStore, narrator: NarrativeCompleter, run_id: str) -> None:
+    """Brief §10.1 step 6: a narrative per owner once the run's results are
+    in. Runs after the run is closed out, and can never fail it -- a Cortex
+    outage leaves ERRORED narratives behind, not a failed run."""
+    try:
+        narratives.generate_all(store, narrator, run_id)
+    except Exception:
+        logger.warning("Narrative generation failed for run %s", run_id, exc_info=True)
 
 
 def _run_body(
@@ -349,6 +366,7 @@ def _build_evaluated_rows(
             site_id=row.site_id,
             is_valid=row.is_valid,
             has_active_disposition=status in _ACTIVE_DISPOSITION_STATUSES,
+            site_name=row.site_name,
         )
         for row, status in zip(rows, row_statuses, strict=True)
     ]
@@ -410,6 +428,7 @@ def _write_site_scores(
         [
             {
                 "site_id": score.site_id,
+                "site_name": score.site_name,
                 "rules_applicable": score.rules_applicable,
                 "rules_failed": score.rules_failed,
                 "open_findings": score.open_findings,

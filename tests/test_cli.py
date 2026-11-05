@@ -220,6 +220,22 @@ def patch_executor(monkeypatch):
     return executor
 
 
+class FakeCompleter:
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, model, prompt, *, query_tag):
+        self.calls += 1
+        return "A narrative."
+
+
+@pytest.fixture(autouse=True)
+def patch_completer(monkeypatch):
+    completer = FakeCompleter()
+    monkeypatch.setattr(cli, "_make_completer", lambda: completer)
+    return completer
+
+
 def test_validate_success(store_path, patch_executor):
     insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT s.ID FROM {{ src.SITE }} s")
     patch_executor.rule_tables["SITE-900"] = make_table([("r1", True)])
@@ -309,3 +325,32 @@ def test_run_with_no_active_rules_still_succeeds(store_path, patch_executor):
     body = json.loads(result.output)
     assert body["status"] == "SUCCEEDED"
     assert body["rules_attempted"] == 0
+
+
+def test_run_generates_narratives_by_default(store_path, patch_executor, patch_completer):
+    insert_rule(store_path, rule_code="SITE-900", status="ACTIVE", check_sql="SELECT 1")
+    patch_executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
+    con = duckdb.connect(str(store_path))
+    con.execute(
+        "INSERT INTO DQ_OWNER (OWNER_EMAIL, DISPLAY_NAME, DOMAINS, IS_APPROVER) "
+        "VALUES ('owner@connexa.co.nz', 'Owner', ['SITE_MASTER'], FALSE)"
+    )
+    con.execute(
+        "UPDATE DQ_CONFIG SET CONFIG_VALUE = 'test-model' WHERE CONFIG_KEY = 'CORTEX_MODEL'"
+    )
+    con.close()
+
+    result = runner.invoke(cli.app, ["run", "--manual"])
+
+    assert result.exit_code == 0
+    assert patch_completer.calls == 1
+
+
+def test_run_no_narratives_flag_skips_cortex(store_path, patch_executor, patch_completer):
+    insert_rule(store_path, rule_code="SITE-900", status="ACTIVE", check_sql="SELECT 1")
+    patch_executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
+
+    result = runner.invoke(cli.app, ["run", "--manual", "--no-narratives"])
+
+    assert result.exit_code == 0
+    assert patch_completer.calls == 0

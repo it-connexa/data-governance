@@ -362,3 +362,28 @@ def test_flagging_an_unknown_rule_raises(store_path):
 
     with pytest.raises(ValueError, match="NOPE-1"):
         flag(store, "NOPE-1")
+
+
+def test_get_object_trend_returns_oldest_first_and_caps_runs_per_object(store_path):
+    store = DuckDBStore(store_path)
+    seed_runs(store_path, store)
+    for (run_id, _), exceptions in zip(RUNS, (30, 20, 10), strict=True):
+        store.write_object_result(
+            run_id,
+            {
+                "target_object": "SITE",
+                "record_label": "sites",
+                "object_total": 100,
+                "active_rules": 1,
+                "rules_succeeded": 1,
+                "records_evaluated": 100,
+                "records_with_exception": exceptions,
+                "open_findings": exceptions,
+                "exception_rate": float(exceptions),
+            },
+        )
+
+    trend = store.get_object_trend(runs=2)
+
+    assert [t["RECORDS_WITH_EXCEPTION"] for t in trend] == [20, 10]
+    assert {t["TARGET_OBJECT"] for t in trend} == {"SITE"}

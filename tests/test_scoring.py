@@ -188,3 +188,24 @@ def test_site_not_referenced_by_any_rule_has_no_score():
     scores = site_scores(weights, rules)
 
     assert "s2" not in scores
+
+
+def test_site_scores_carry_the_site_name_from_any_row_that_has_one():
+    weights = {"CRITICAL": 5, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    rules = [
+        SiteRuleRows("SITE-001", "HIGH", [EvaluatedRow("r1", None, "s1", True)]),
+        SiteRuleRows(
+            "SITE-002", "MEDIUM", [EvaluatedRow("r2", None, "s1", False, site_name="Site One")]
+        ),
+    ]
+
+    scores = site_scores(weights, rules)
+
+    assert scores["s1"].site_name == "Site One"
+
+
+def test_site_score_name_is_none_when_no_row_has_one():
+    weights = {"CRITICAL": 5, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    rules = [SiteRuleRows("SITE-001", "HIGH", [EvaluatedRow("r1", None, "s1", True)])]
+
+    assert site_scores(weights, rules)["s1"].site_name is None

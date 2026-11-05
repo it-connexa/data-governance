@@ -1230,6 +1230,19 @@ class DuckDBStore:
             cur = con.execute("SELECT * FROM V_OBJECT_SUMMARY_LATEST ORDER BY TARGET_OBJECT")
             return _rows_to_dicts(cur, cur.fetchall())
 
+    def get_object_trend(self, *, runs: int = 12) -> list[dict[str, Any]]:
+        """Each object's last `runs` rollups, oldest first."""
+        with self._connect() as con:
+            cur = con.execute(
+                """
+                SELECT * FROM V_OBJECT_TREND
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY TARGET_OBJECT ORDER BY RUN_AT DESC) <= ?
+                ORDER BY TARGET_OBJECT, RUN_AT
+                """,
+                [runs],
+            )
+            return _rows_to_dicts(cur, cur.fetchall())
+
     def get_rule_trend(
         self, *, rule_code: str | None = None, runs: int = 12
     ) -> list[dict[str, Any]]:

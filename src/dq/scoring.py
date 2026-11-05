@@ -19,6 +19,7 @@ class EvaluatedRow:
     site_id: str | None
     is_valid: bool
     has_active_disposition: bool = False
+    site_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ class SiteRuleRows:
 @dataclass(frozen=True)
 class SiteScore:
     site_id: str
+    site_name: str | None
     rules_applicable: int
     rules_failed: int
     open_findings: int
@@ -151,6 +153,7 @@ def site_scores(
     failed: dict[str, set[str]] = {}
     open_findings: dict[str, int] = {}
     critical_open: dict[str, int] = {}
+    site_names: dict[str, str] = {}
 
     for rule in site_rule_rows:
         sites_seen_failing: set[str] = set()
@@ -158,6 +161,8 @@ def site_scores(
             if row.site_id is None:
                 continue
             applicable.setdefault(row.site_id, set()).add(rule.rule_code)
+            if row.site_name and row.site_id not in site_names:
+                site_names[row.site_id] = row.site_name
             if not row.is_valid and not row.has_active_disposition:
                 sites_seen_failing.add(row.site_id)
                 open_findings[row.site_id] = open_findings.get(row.site_id, 0) + 1
@@ -182,6 +187,7 @@ def site_scores(
 
         scores[site_id] = SiteScore(
             site_id=site_id,
+            site_name=site_names.get(site_id),
             rules_applicable=len(applicable_rules),
             rules_failed=len(failed_rules),
             open_findings=open_findings.get(site_id, 0),
