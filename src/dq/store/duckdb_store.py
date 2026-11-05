@@ -135,11 +135,13 @@ class DuckDBStore:
     ) -> dict[str, Any] | None:
         cur = con.execute(
             """
-            SELECT * FROM DQ_FINDING_DISPOSITION
-            WHERE FINDING_ID = ? AND DISPOSITION <> 'REVOKED'
-              AND (EXPIRES_AT IS NULL OR EXPIRES_AT > ?)
-            ORDER BY SET_AT DESC
-            LIMIT 1
+            SELECT * FROM (
+                SELECT * FROM DQ_FINDING_DISPOSITION
+                WHERE FINDING_ID = ?
+                ORDER BY SET_AT DESC, DISPOSITION_ID DESC
+                LIMIT 1
+            )
+            WHERE DISPOSITION <> 'REVOKED' AND (EXPIRES_AT IS NULL OR EXPIRES_AT > ?)
             """,
             [finding_id, as_of],
         )
@@ -1076,3 +1078,324 @@ class DuckDBStore:
             facilitated_by=facilitated_by,
         )
         return updated
+
+    # --- findings, dispositions and reporting reads (brief §10.6 pages 4-5) ----
+
+    _FINDING_SELECT = """
+        WITH latest_disposition AS (
+            SELECT * FROM DQ_FINDING_DISPOSITION
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY FINDING_ID ORDER BY SET_AT DESC, DISPOSITION_ID DESC
+            ) = 1
+        )
+        SELECT
+            f.* EXCLUDE (DETAIL),
+            CAST(f.DETAIL AS VARCHAR)                                AS DETAIL,
+            r.RULE_NAME, r.SEVERITY, r.DIMENSION, r.DOMAIN, r.OWNER_EMAIL, r.TARGET_OBJECT,
+            s.SORT_ORDER                                             AS SEVERITY_SORT,
+            date_diff('day', f.FIRST_SEEN_AT, current_timestamp)     AS AGE_DAYS,
+            CASE WHEN d.DISPOSITION <> 'REVOKED' THEN d.DISPOSITION END    AS DISPOSITION,
+            CASE WHEN d.DISPOSITION <> 'REVOKED' THEN d.REASON END         AS DISPOSITION_REASON,
+            CASE WHEN d.DISPOSITION <> 'REVOKED' THEN d.SET_BY END         AS DISPOSITION_SET_BY,
+            CASE WHEN d.DISPOSITION <> 'REVOKED' THEN d.SET_AT END         AS DISPOSITION_SET_AT,
+            CASE WHEN d.DISPOSITION <> 'REVOKED' THEN d.EXPIRES_AT END     AS DISPOSITION_EXPIRES_AT
+        FROM DQ_FINDING f
+        JOIN DQ_RULE r     ON r.RULE_ID = f.RULE_ID
+        JOIN DQ_SEVERITY s ON s.SEVERITY = r.SEVERITY
+        LEFT JOIN latest_disposition d ON d.FINDING_ID = f.FINDING_ID
+    """
+
+    def list_findings(self, owner_email: str | None = None) -> list[dict[str, Any]]:
+        sql = self._FINDING_SELECT
+        params: list[Any] = []
+        if owner_email is not None:
+            sql += " WHERE r.OWNER_EMAIL = ?"
+            params.append(owner_email)
+        sql += " ORDER BY s.SORT_ORDER, f.FIRST_SEEN_AT, f.FINDING_ID"
+        with self._connect() as con:
+            cur = con.execute(sql, params)
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def get_finding(self, finding_id: str) -> dict[str, Any] | None:
+        with self._connect() as con:
+            cur = con.execute(self._FINDING_SELECT + " WHERE f.FINDING_ID = ?", [finding_id])
+            row = cur.fetchone()
+            return _rows_to_dicts(cur, [row])[0] if row else None
+
+    def count_findings_by_status(self, rule_code: str) -> dict[str, int]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT STATUS, COUNT(*) FROM DQ_FINDING WHERE RULE_CODE = ? GROUP BY STATUS",
+                [rule_code],
+            ).fetchall()
+            return {status: count for status, count in rows}
+
+    def list_dispositions(self, finding_id: str) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute(
+                "SELECT * FROM DQ_FINDING_DISPOSITION WHERE FINDING_ID = ? "
+                "ORDER BY SET_AT DESC, DISPOSITION_ID DESC",
+                [finding_id],
+            )
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def set_dispositions(
+        self,
+        finding_ids: list[str],
+        disposition: str,
+        reason: str,
+        *,
+        set_by: str,
+        facilitated_by: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> int:
+        """Record one disposition per finding and move each finding's STATUS
+        straight away (REVOKED -> OPEN), so the app doesn't wait for the next
+        run to show it. All-or-nothing: one unknown id or constraint failure
+        rolls back every row. Who-may-do-what checks live in finding_ops."""
+        new_status = "OPEN" if disposition == "REVOKED" else disposition
+        set_at = datetime.now(UTC)
+        con = self._connect()
+        try:
+            con.begin()
+            known = {
+                row[0]
+                for row in con.execute(
+                    "SELECT FINDING_ID FROM DQ_FINDING WHERE FINDING_ID IN "
+                    f"({', '.join('?' * len(finding_ids))})",
+                    finding_ids,
+                ).fetchall()
+            }
+            for finding_id in finding_ids:
+                if finding_id not in known:
+                    raise ValueError(f"Unknown finding id: {finding_id}")
+            for finding_id in finding_ids:
+                con.execute(
+                    """
+                    INSERT INTO DQ_FINDING_DISPOSITION (
+                        FINDING_ID, DISPOSITION, REASON, SET_BY, FACILITATED_BY, SET_AT, EXPIRES_AT
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [finding_id, disposition, reason, set_by, facilitated_by, set_at, expires_at],
+                )
+                con.execute(
+                    "UPDATE DQ_FINDING SET STATUS = ? WHERE FINDING_ID = ?",
+                    [new_status, finding_id],
+                )
+            con.commit()
+        except BaseException:
+            con.rollback()
+            raise
+        finally:
+            con.close()
+        return len(finding_ids)
+
+    def list_runs(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute("SELECT * FROM DQ_RUN ORDER BY STARTED_AT DESC LIMIT ?", [limit])
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def get_latest_run(self) -> dict[str, Any] | None:
+        """The latest SUCCEEDED or PARTIAL run -- the one the results views
+        (V_*_LATEST) describe. list_runs(1) is the latest of any status."""
+        with self._connect() as con:
+            cur = con.execute(
+                "SELECT * FROM DQ_RUN WHERE STATUS IN ('SUCCEEDED', 'PARTIAL') "
+                "ORDER BY STARTED_AT DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            return _rows_to_dicts(cur, [row])[0] if row else None
+
+    def get_run_rule_errors(self, run_id: str) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute(
+                "SELECT RULE_CODE, ERROR_MESSAGE FROM DQ_RULE_RESULT "
+                "WHERE RUN_ID = ? AND STATUS = 'ERRORED' ORDER BY RULE_CODE",
+                [run_id],
+            )
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def list_rule_summaries_latest(self, owner_email: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM V_RULE_SUMMARY_LATEST"
+        params: list[Any] = []
+        if owner_email is not None:
+            sql += " WHERE OWNER_EMAIL = ?"
+            params.append(owner_email)
+        with self._connect() as con:
+            cur = con.execute(sql + " ORDER BY RULE_CODE", params)
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def list_object_summaries_latest(self) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute("SELECT * FROM V_OBJECT_SUMMARY_LATEST ORDER BY TARGET_OBJECT")
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def get_rule_trend(
+        self, *, rule_code: str | None = None, runs: int = 12
+    ) -> list[dict[str, Any]]:
+        """Each rule's last `runs` results, oldest first (for sparklines)."""
+        sql = "SELECT * FROM V_RULE_TREND"
+        params: list[Any] = []
+        if rule_code is not None:
+            sql += " WHERE RULE_CODE = ?"
+            params.append(rule_code)
+        sql += (
+            " QUALIFY ROW_NUMBER() OVER (PARTITION BY RULE_CODE ORDER BY RUN_AT DESC) <= ?"
+            " ORDER BY RULE_CODE, RUN_AT"
+        )
+        params.append(runs)
+        with self._connect() as con:
+            cur = con.execute(sql, params)
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def list_site_scores_latest(self, limit: int | None = None) -> list[dict[str, Any]]:
+        sql = (
+            "SELECT * FROM V_SITE_SCORE_LATEST "
+            "ORDER BY WEIGHTED_SCORE ASC NULLS LAST, CRITICAL_OPEN DESC, SITE_ID"
+        )
+        params: list[Any] = []
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as con:
+            cur = con.execute(sql, params)
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def get_source_freshness_latest(self) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute("SELECT * FROM V_SOURCE_FRESHNESS_LATEST ORDER BY SOURCE_NAME")
+            return _rows_to_dicts(cur, cur.fetchall())
+
+    def write_narrative(
+        self,
+        run_id: str,
+        owner_email: str,
+        *,
+        status: str,
+        narrative: str | None,
+        model: str | None,
+        prompt_version: str | None,
+        input_summary: dict[str, Any] | None,
+        generated_at: datetime,
+        error_message: str | None = None,
+    ) -> None:
+        """Insert-or-replace on (run, owner): regenerating a narrative for the
+        same run overwrites it rather than piling up rows."""
+        with self._connect() as con:
+            con.execute(
+                """
+                INSERT OR REPLACE INTO DQ_NARRATIVE (
+                    RUN_ID, OWNER_EMAIL, NARRATIVE, MODEL, PROMPT_VERSION, INPUT_SUMMARY,
+                    STATUS, ERROR_MESSAGE, GENERATED_AT
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    run_id,
+                    owner_email,
+                    narrative,
+                    model,
+                    prompt_version,
+                    json.dumps(input_summary, default=str) if input_summary is not None else None,
+                    status,
+                    error_message,
+                    generated_at,
+                ],
+            )
+
+    def get_latest_narrative(self, owner_email: str) -> dict[str, Any] | None:
+        with self._connect() as con:
+            cur = con.execute(
+                """
+                SELECT RUN_ID, OWNER_EMAIL, NARRATIVE, MODEL, PROMPT_VERSION,
+                       CAST(INPUT_SUMMARY AS VARCHAR) AS INPUT_SUMMARY,
+                       STATUS, ERROR_MESSAGE, GENERATED_AT
+                FROM DQ_NARRATIVE
+                WHERE OWNER_EMAIL = ?
+                ORDER BY GENERATED_AT DESC
+                LIMIT 1
+                """,
+                [owner_email],
+            )
+            row = cur.fetchone()
+            return _rows_to_dicts(cur, [row])[0] if row else None
+
+    # --- rule review flag (history rows, migration 0002) -----------------------
+
+    def _add_flag_history(
+        self,
+        rule_code: str,
+        change_type: str,
+        *,
+        by: str,
+        facilitated_by: str | None,
+        comment: str | None,
+    ) -> None:
+        rule = self.get_rule(rule_code)
+        if rule is None:
+            raise ValueError(f"Unknown rule code: {rule_code}")
+        self.add_history(
+            rule_id=rule["RULE_ID"],
+            rule_code=rule_code,
+            version=rule["VERSION"],
+            change_type=change_type,
+            status_after=rule["STATUS"],
+            snapshot=rule,
+            changed_by=by,
+            facilitated_by=facilitated_by,
+            comment=comment,
+        )
+
+    def flag_rule_for_review(
+        self, rule_code: str, reason: str, *, flagged_by: str, facilitated_by: str | None = None
+    ) -> None:
+        self._add_flag_history(
+            rule_code,
+            "REVIEW_FLAGGED",
+            by=flagged_by,
+            facilitated_by=facilitated_by,
+            comment=reason,
+        )
+
+    def clear_rule_review_flag(
+        self,
+        rule_code: str,
+        *,
+        cleared_by: str,
+        facilitated_by: str | None = None,
+        comment: str | None = None,
+    ) -> None:
+        self._add_flag_history(
+            rule_code,
+            "REVIEW_CLEARED",
+            by=cleared_by,
+            facilitated_by=facilitated_by,
+            comment=comment,
+        )
+
+    # A flag stays open until a later REVIEW_CLEARED, or until the rule itself
+    # is recompiled or its statement edited (i.e. someone has acted on it).
+    _FLAG_STATE_SQL = """
+        WITH latest AS (
+            SELECT RULE_CODE, CHANGE_TYPE, COMMENT, CHANGED_BY, CHANGED_AT
+            FROM DQ_RULE_HISTORY
+            WHERE CHANGE_TYPE IN
+                ('REVIEW_FLAGGED', 'REVIEW_CLEARED', 'SQL_COMPILED', 'STATEMENT_EDITED')
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY RULE_CODE ORDER BY HISTORY_ID DESC) = 1
+        )
+        SELECT RULE_CODE, COMMENT AS REASON, CHANGED_BY AS FLAGGED_BY, CHANGED_AT AS FLAGGED_AT
+        FROM latest
+        WHERE CHANGE_TYPE = 'REVIEW_FLAGGED'
+    """
+
+    def get_rule_review_flag(self, rule_code: str) -> dict[str, Any] | None:
+        with self._connect() as con:
+            cur = con.execute(
+                f"SELECT * FROM ({self._FLAG_STATE_SQL}) WHERE RULE_CODE = ?", [rule_code]
+            )
+            row = cur.fetchone()
+            return _rows_to_dicts(cur, [row])[0] if row else None
+
+    def list_rules_flagged_for_review(self) -> dict[str, dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute(self._FLAG_STATE_SQL + " ORDER BY RULE_CODE")
+            return {row["RULE_CODE"]: row for row in _rows_to_dicts(cur, cur.fetchall())}

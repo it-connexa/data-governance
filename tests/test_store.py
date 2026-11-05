@@ -487,3 +487,22 @@ def test_get_active_disposition_ignores_expired_and_revoked(store_path):
     active = store.get_active_disposition(finding_id)
     assert active is not None
     assert active["DISPOSITION"] == "FALSE_POSITIVE"
+
+
+def test_latest_disposition_decides_so_a_revoke_cancels_an_earlier_one(store_path):
+    """A REVOKED row is the *latest* word on the finding: it must cancel the
+    earlier disposition, not be skipped in favour of it."""
+    rule_id = insert_rule(store_path, rule_code="SITE-900")
+    store = DuckDBStore(store_path)
+    row = FindingInput("r1", None, "Site One", "r1", "Site One", is_valid=False, detail=None)
+    apply(store, rule_id, RUN_1, T1, [row])
+    finding_id = (
+        duckdb.connect(str(store_path)).execute("SELECT FINDING_ID FROM DQ_FINDING").fetchone()[0]
+    )
+    insert_disposition(store_path, finding_id=finding_id, disposition="FALSE_POSITIVE")
+    insert_disposition(store_path, finding_id=finding_id, disposition="REVOKED")
+
+    assert store.get_active_disposition(finding_id) is None
+
+    insert_disposition(store_path, finding_id=finding_id, disposition="FALSE_POSITIVE")
+    assert store.get_active_disposition(finding_id)["DISPOSITION"] == "FALSE_POSITIVE"

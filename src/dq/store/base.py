@@ -224,3 +224,77 @@ class GovernanceStore(Protocol):
     def has_rule_run_history(self, rule_code: str) -> bool: ...
 
     def delete_rule(self, rule_code: str) -> None: ...
+
+    # --- findings, dispositions and reporting reads (brief §10.6 pages 4-5) ---
+
+    def list_findings(self, owner_email: str | None = None) -> list[dict[str, Any]]: ...
+
+    def get_finding(self, finding_id: str) -> dict[str, Any] | None: ...
+
+    def count_findings_by_status(self, rule_code: str) -> dict[str, int]: ...
+
+    def list_dispositions(self, finding_id: str) -> list[dict[str, Any]]: ...
+
+    def set_dispositions(
+        self,
+        finding_ids: list[str],
+        disposition: str,
+        reason: str,
+        *,
+        set_by: str,
+        facilitated_by: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> int: ...
+
+    def list_runs(self, limit: int = 10) -> list[dict[str, Any]]: ...
+
+    def get_latest_run(self) -> dict[str, Any] | None: ...
+
+    def get_run_rule_errors(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    def list_rule_summaries_latest(
+        self, owner_email: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    def list_object_summaries_latest(self) -> list[dict[str, Any]]: ...
+
+    def get_rule_trend(
+        self, *, rule_code: str | None = None, runs: int = 12
+    ) -> list[dict[str, Any]]: ...
+
+    def list_site_scores_latest(self, limit: int | None = None) -> list[dict[str, Any]]: ...
+
+    def get_source_freshness_latest(self) -> list[dict[str, Any]]: ...
+
+    def write_narrative(
+        self,
+        run_id: str,
+        owner_email: str,
+        *,
+        status: str,
+        narrative: str | None,
+        model: str | None,
+        prompt_version: str | None,
+        input_summary: dict[str, Any] | None,
+        generated_at: datetime,
+        error_message: str | None = None,
+    ) -> None: ...
+
+    def get_latest_narrative(self, owner_email: str) -> dict[str, Any] | None: ...
+
+    def flag_rule_for_review(
+        self, rule_code: str, reason: str, *, flagged_by: str, facilitated_by: str | None = None
+    ) -> None: ...
+
+    def clear_rule_review_flag(
+        self,
+        rule_code: str,
+        *,
+        cleared_by: str,
+        facilitated_by: str | None = None,
+        comment: str | None = None,
+    ) -> None: ...
+
+    def get_rule_review_flag(self, rule_code: str) -> dict[str, Any] | None: ...
+
+    def list_rules_flagged_for_review(self) -> dict[str, dict[str, Any]]: ...
