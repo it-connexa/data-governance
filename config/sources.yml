@@ -55,35 +55,13 @@ sources:
     columns: ["*"]
     filters: []
 
-  MILESTONE_EXT:
-    table: PROJECT_EXT_C
-    sf_object: <MILESTONE_OBJECT_API_NAME>
-    record_label: projects                   # one row per project; milestones are columns
-    item_label: milestones                   # default ITEM_LABEL for multi-item rules on this source
-    description: >
-      Wide milestone table: one row per project, 100+ milestones as forecast/actual
-      date column pairs. Rules unpivot the milestone columns they name, so findings
-      are per project per milestone (ITEM_KEY = milestone label).
-    columns: ["*"]
-    filters: []
-
-  MILESTONE_EXT_2:
-    table: PROJECT_EXT_2_C
-    sf_object: <MILESTONE_OBJECT_API_NAME>
-    record_label: projects                   # one row per project; milestones are columns
-    item_label: milestones                   # default ITEM_LABEL for multi-item rules on this source
-    description: >
-      Wide milestone table: one row per project, 100+ milestones as forecast/actual
-      date column pairs. Rules unpivot the milestone columns they name, so findings
-      are per project per milestone (ITEM_KEY = milestone label).
-    columns: ["*"]
-    filters: []
-
   # Reporting layer. Milestones are the one place the raw tables are too awkward
   # (100+ wide forecast/actual column pairs, and some backend column names don't
   # match what Sitetracker shows, e.g. "Tower Installed Finished" is stored as
   # TOWER_INSTALL_START_*). The reporting table is unpivoted and carries the
   # front-end milestone names. SITE and PROJECT stay on the raw tables.
+  # The raw wide tables (PROJECT_EXT_C, PROJECT_EXT_2_C) were retired as sources on
+  # 2026-11-06 once MS-001 v4 moved here; add them back only with a good reason.
   #
   # Catalogue refreshed 2026-11-06 (21 columns): PROJECT_ID, PROJECT_TRAN_ID, SITE_ID,
   # SITE_NAME, PROJECT_TEMPLATE_NAME, MILESTONE_NAME, ACTUAL_DATE, FORECAST_DATE,

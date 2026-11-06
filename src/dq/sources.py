@@ -39,8 +39,8 @@ class LintError(Exception):
 
 # A rule's TARGET_OBJECT (brief §7's rule domain: SITE/PROJECT/MILESTONE) is
 # usually also a literal sources.yml source name, but milestones aren't their
-# own Salesforce object or a single Snowflake table -- they're columns on
-# project extension tables (MILESTONE_EXT/MILESTONE_EXT_2), so there's no
+# own Salesforce object -- they're rows of the reporting-layer MILESTONES
+# source (one row per project per milestone), so there's no
 # {{ src.MILESTONE }}. A milestone rule's RECORD_ID is always a project, so
 # OBJECT_TOTAL counts and deep-link sf_object lookups for it resolve to
 # PROJECT instead.
