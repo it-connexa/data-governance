@@ -27,10 +27,10 @@ def insert_rule(
             INSERT INTO DQ_RULE (
                 RULE_CODE, RULE_NAME, RULE_STATEMENT, DOMAIN, TARGET_OBJECT,
                 SCOPE, DIMENSION, SEVERITY, OWNER_EMAIL, STATUS, CREATED_BY
-            ) VALUES (?, ?, 'stmt', 'SITE_MASTER', 'SITE', 'SITE', 'VALIDITY', ?,
+            ) VALUES (?, ?, ?, 'SITE_MASTER', 'SITE', 'SITE', 'VALIDITY', ?,
                       ?, 'ACTIVE', 'test')
             """,
-            [rule_code, f"{rule_code} test rule", severity, owner],
+            [rule_code, f"{rule_code} test rule", f"{rule_code} must hold", severity, owner],
         )
         return con.execute(
             "SELECT RULE_ID FROM DQ_RULE WHERE RULE_CODE = ?", [rule_code]
@@ -74,6 +74,16 @@ def seed(store_path: Path, store: DuckDBStore) -> dict[str, str]:
 
 
 # --- list_findings / get_finding -----------------------------------------------
+
+
+def test_findings_carry_the_rules_plain_english_statement(store_path):
+    store = DuckDBStore(store_path)
+    ids = seed(store_path, store)
+
+    listed = {f["FINDING_ID"]: f for f in store.list_findings()}
+
+    assert listed[ids["r1"]]["RULE_STATEMENT"] == "SITE-900 must hold"
+    assert store.get_finding(ids["r3"])["RULE_STATEMENT"] == "SITE-901 must hold"
 
 
 def test_list_findings_joins_rule_fields_and_sorts_by_severity(store_path):

@@ -263,3 +263,17 @@ def test_summarise_counts_by_status_and_flags_expiring_exceptions():
     assert summary.expired == 1  # lapsed; reopens at the next run
     assert summary.false_positive == 1
     assert summary.resolved == 1
+
+
+def test_is_lapsing_matches_the_summary_for_expiring_and_lapsed_exceptions():
+    soon = {"STATUS": "ACCEPTED_EXCEPTION", "DISPOSITION_EXPIRES_AT": NOW + timedelta(days=10)}
+    far = {"STATUS": "ACCEPTED_EXCEPTION", "DISPOSITION_EXPIRES_AT": NOW + timedelta(days=200)}
+    lapsed = {"STATUS": "ACCEPTED_EXCEPTION", "DISPOSITION_EXPIRES_AT": NOW - timedelta(days=1)}
+    no_expiry = {"STATUS": "ACCEPTED_EXCEPTION", "DISPOSITION_EXPIRES_AT": None}
+
+    assert finding_ops.is_lapsing(soon, now=NOW)
+    assert finding_ops.is_lapsing(lapsed, now=NOW)
+    assert not finding_ops.is_lapsing(far, now=NOW)
+    assert not finding_ops.is_lapsing(no_expiry, now=NOW)
+    assert not finding_ops.is_lapsing({"STATUS": "OPEN"}, now=NOW)
+    assert not finding_ops.is_lapsing({"STATUS": "FALSE_POSITIVE"}, now=NOW)

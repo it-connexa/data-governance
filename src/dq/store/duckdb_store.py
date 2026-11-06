@@ -1105,7 +1105,8 @@ class DuckDBStore:
         SELECT
             f.* EXCLUDE (DETAIL),
             CAST(f.DETAIL AS VARCHAR)                                AS DETAIL,
-            r.RULE_NAME, r.SEVERITY, r.DIMENSION, r.DOMAIN, r.OWNER_EMAIL, r.TARGET_OBJECT,
+            r.RULE_NAME, r.RULE_STATEMENT, r.SEVERITY, r.DIMENSION, r.DOMAIN, r.OWNER_EMAIL,
+            r.TARGET_OBJECT,
             s.SORT_ORDER                                             AS SEVERITY_SORT,
             date_diff('day', f.FIRST_SEEN_AT, current_timestamp)     AS AGE_DAYS,
             CASE WHEN d.DISPOSITION <> 'REVOKED' THEN d.DISPOSITION END    AS DISPOSITION,

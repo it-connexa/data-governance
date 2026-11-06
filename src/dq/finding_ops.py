@@ -242,6 +242,16 @@ def clear_review_flag(
 # --- summary for the page header ---------------------------------------------------
 
 
+def is_lapsing(finding: dict[str, Any], *, now: datetime | None = None) -> bool:
+    """An accepted exception that has lapsed or lapses within EXPIRING_SOON_DAYS."""
+    if finding["STATUS"] != "ACCEPTED_EXCEPTION":
+        return False
+    expires_at = finding.get("DISPOSITION_EXPIRES_AT")
+    if expires_at is None:
+        return False
+    return expires_at <= (now or datetime.now(UTC)) + timedelta(days=EXPIRING_SOON_DAYS)
+
+
 def summarise(findings: list[dict[str, Any]], *, now: datetime | None = None) -> FindingSummary:
     now = now or datetime.now(UTC)
     soon = now + timedelta(days=EXPIRING_SOON_DAYS)
