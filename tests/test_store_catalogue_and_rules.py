@@ -382,3 +382,53 @@ def test_list_owners_returns_active_owners(store_path):
     emails = {o["OWNER_EMAIL"] for o in owners}
     assert "a@connexa.co.nz" in emails
     assert "b@connexa.co.nz" not in emails
+
+
+# --- rule history (the Rules page History tab) ---------------------------------
+
+
+def _add_history(store, rule_id, rule_code, change_type, status_after, *, version=1, comment=None):
+    store.add_history(
+        rule_id=rule_id,
+        rule_code=rule_code,
+        version=version,
+        change_type=change_type,
+        status_after=status_after,
+        snapshot={"RULE_CODE": rule_code},
+        changed_by="kevin@connexa.co.nz",
+        facilitated_by="kevin",
+        comment=comment,
+    )
+
+
+def test_list_rule_history_returns_newest_first_for_one_rule(store_path):
+    store = DuckDBStore(store_path)
+    rule_id = insert_rule(store_path, rule_code="SITE-900")
+    other_id = insert_rule(store_path, rule_code="SITE-901")
+    _add_history(store, rule_id, "SITE-900", "CREATED", "DRAFT")
+    _add_history(store, rule_id, "SITE-900", "SUBMITTED", "READY_FOR_COMPILE")
+    _add_history(store, other_id, "SITE-901", "CREATED", "DRAFT")
+    _add_history(
+        store, rule_id, "SITE-900", "SQL_COMPILED", "COMPILED", version=2, comment="checked"
+    )
+
+    history = store.list_rule_history("SITE-900")
+
+    assert [h["CHANGE_TYPE"] for h in history] == ["SQL_COMPILED", "SUBMITTED", "CREATED"]
+    assert history[0]["STATUS_AFTER"] == "COMPILED"
+    assert history[0]["VERSION"] == 2
+    assert history[0]["COMMENT"] == "checked"
+    assert history[0]["CHANGED_BY"] == "kevin@connexa.co.nz"
+    assert history[0]["FACILITATED_BY"] == "kevin"
+    assert history[0]["CHANGED_AT"] is not None
+
+
+def test_list_rule_history_leaves_out_the_snapshot_and_handles_no_history(store_path):
+    store = DuckDBStore(store_path)
+    rule_id = insert_rule(store_path, rule_code="SITE-900")
+    _add_history(store, rule_id, "SITE-900", "CREATED", "DRAFT")
+
+    history = store.list_rule_history("SITE-900")
+
+    assert "SNAPSHOT" not in history[0]
+    assert store.list_rule_history("NOPE-1") == []

@@ -498,6 +498,20 @@ class DuckDBStore:
                 ],
             )
 
+    def list_rule_history(self, rule_code: str) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            cur = con.execute(
+                """
+                SELECT HISTORY_ID, RULE_CODE, VERSION, CHANGE_TYPE, STATUS_AFTER, CHANGED_BY,
+                       FACILITATED_BY, CHANGED_AT, COMMENT
+                FROM DQ_RULE_HISTORY
+                WHERE RULE_CODE = ?
+                ORDER BY CHANGED_AT DESC, HISTORY_ID DESC
+                """,
+                [rule_code],
+            )
+            return _rows_to_dicts(cur, cur.fetchall())
+
     # --- catalogue (brief §7: dq catalogue refresh/show/load-labels) ---------
 
     def upsert_source_columns(

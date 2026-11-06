@@ -123,6 +123,10 @@ class GovernanceStore(Protocol):
         comment: str | None = None,
     ) -> None: ...
 
+    def list_rule_history(self, rule_code: str) -> list[dict[str, Any]]:
+        """A rule's lifecycle history, newest first, without the row snapshots."""
+        ...
+
     # --- catalogue (brief §7: dq catalogue refresh/show/load-labels) ---------
 
     def upsert_source_columns(
