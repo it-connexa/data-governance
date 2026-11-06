@@ -10,6 +10,7 @@ owner themselves, never called by Claude Code.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,18 @@ def _validation_dict(
         "duration_ms": duration_ms,
         "query_id": query_id,
     }
+
+
+def _require_rows(validation: ValidationResult) -> ValidationResult:
+    """At compile or validate time a check that returns nothing is almost
+    always a wrong join, filter or value, and would otherwise compile cleanly."""
+    if validation.ok and validation.items_evaluated == 0:
+        message = (
+            "the check returned no rows, so it evaluates nothing -- "
+            "usually a wrong join, filter or value"
+        )
+        return dataclasses.replace(validation, ok=False, errors=[*validation.errors, message])
+    return validation
 
 
 def _lint_error_dict(exc: LintError) -> dict[str, Any]:
@@ -101,12 +114,50 @@ def validate_rule(
     exec_result = executor.execute_rule(
         rule_code, rendered_sql, query_tag=query_tag, timeout_seconds=config.rule_timeout_seconds
     )
-    validation = validate_result(exec_result.table, scope=rule["SCOPE"])
+    validation = _require_rows(validate_result(exec_result.table, scope=rule["SCOPE"]))
     result = _validation_dict(
         validation, duration_ms=exec_result.duration_ms, query_id=exec_result.query_id
     )
     store.record_validation(rule_code, result, changed_by=changed_by)
     return result
+
+
+def validate_sql_file(
+    store: GovernanceStore,
+    executor: RuleExecutor,
+    sources_config: SourcesConfig,
+    rule_code: str,
+    sql_path: Path | str,
+    *,
+    config: EngineConfig,
+    query_tag: str,
+) -> dict[str, Any]:
+    """dq validate CODE --file PATH: a dry run of a candidate SQL file against
+    the rule's contract. Returns counts and column metadata only, and writes
+    nothing: the rule's CHECK_SQL, STATUS and stored validation are untouched."""
+    path = Path(sql_path)
+    if not path.exists():
+        raise RuleOpsError(f"SQL file not found: {path}")
+    rule = store.get_rule(rule_code)
+    if rule is None:
+        raise RuleOpsError(f"Unknown rule code: {rule_code}")
+
+    check_sql = path.read_text()
+    try:
+        lint(check_sql, sources_config)
+    except LintError as exc:
+        return _lint_error_dict(exc)
+
+    exec_result = executor.execute_rule(
+        rule_code,
+        render(check_sql, sources_config),
+        query_tag=query_tag,
+        timeout_seconds=config.rule_timeout_seconds,
+    )
+    validation = _require_rows(validate_result(exec_result.table, scope=rule["SCOPE"]))
+    return _validation_dict(
+        validation, duration_ms=exec_result.duration_ms, query_id=exec_result.query_id
+    )
 
 
 def set_rule_sql(
@@ -142,7 +193,7 @@ def set_rule_sql(
     exec_result = executor.execute_rule(
         rule_code, rendered_sql, query_tag=query_tag, timeout_seconds=config.rule_timeout_seconds
     )
-    validation = validate_result(exec_result.table, scope=rule["SCOPE"])
+    validation = _require_rows(validate_result(exec_result.table, scope=rule["SCOPE"]))
     validation_dict = _validation_dict(
         validation, duration_ms=exec_result.duration_ms, query_id=exec_result.query_id
     )

@@ -178,6 +178,104 @@ def test_validate_lint_failure_is_reported_not_raised(store_path, sources_config
     assert executor.calls == []  # never reached Snowflake
 
 
+def test_validate_reports_a_check_that_returns_no_rows_as_not_ok(store_path, sources_config):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT s.ID FROM {{ src.SITE }} s")
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+    executor.rule_tables["SITE-900"] = make_table([])
+
+    result = rule_ops.validate_rule(
+        store, executor, sources_config, "SITE-900", config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    assert result["ok"] is False
+    assert any("no rows" in e for e in result["errors"])
+    assert result["records_evaluated"] == 0
+
+
+# --- dq validate --file (dry run of a candidate SQL file) ---------------------------
+
+
+def test_validate_sql_file_returns_counts_without_writing(store_path, sources_config, tmp_path):
+    insert_rule(store_path, rule_code="SITE-900", status="ACTIVE", check_sql="SELECT 1")
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+    executor.rule_tables["SITE-900"] = make_table([("r1", True), ("r2", False)])
+    sql_path = tmp_path / "candidate.sql"
+    sql_path.write_text("SELECT s.ID FROM {{ src.SITE }} s")
+
+    result = rule_ops.validate_sql_file(
+        store, executor, sources_config, "SITE-900", sql_path, config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    assert result["ok"] is True
+    assert result["records_evaluated"] == 2
+    assert result["records_failed"] == 1
+    after = store.get_rule("SITE-900")
+    assert after["CHECK_SQL"] == "SELECT 1"  # untouched
+    assert after["STATUS"] == "ACTIVE"
+    assert after["VALIDATION_RESULT"] is None  # nothing persisted
+
+
+def test_validate_sql_file_reports_no_rows_as_not_ok(store_path, sources_config, tmp_path):
+    insert_rule(store_path, rule_code="SITE-900")
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+    executor.rule_tables["SITE-900"] = make_table([])
+    sql_path = tmp_path / "candidate.sql"
+    sql_path.write_text("SELECT s.ID FROM {{ src.SITE }} s")
+
+    result = rule_ops.validate_sql_file(
+        store, executor, sources_config, "SITE-900", sql_path, config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    assert result["ok"] is False
+    assert any("no rows" in e for e in result["errors"])
+
+
+def test_validate_sql_file_reports_lint_failure_without_executing(
+    store_path, sources_config, tmp_path
+):
+    insert_rule(store_path, rule_code="SITE-900")
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+    sql_path = tmp_path / "candidate.sql"
+    sql_path.write_text("DROP TABLE {{ src.SITE }}")
+
+    result = rule_ops.validate_sql_file(
+        store, executor, sources_config, "SITE-900", sql_path, config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    assert result["ok"] is False
+    assert executor.calls == []
+
+
+def test_validate_sql_file_missing_file_or_rule_raises(store_path, sources_config, tmp_path):
+    insert_rule(store_path, rule_code="SITE-900")
+    store = DuckDBStore(store_path)
+    with pytest.raises(rule_ops.RuleOpsError, match="not found"):
+        rule_ops.validate_sql_file(
+            store,
+            FakeExecutor(),
+            sources_config,
+            "SITE-900",
+            tmp_path / "nope.sql",
+            config=CONFIG,
+            query_tag=QUERY_TAG,
+        )
+    (tmp_path / "x.sql").write_text("SELECT 1")
+    with pytest.raises(rule_ops.RuleOpsError, match="Unknown rule"):
+        rule_ops.validate_sql_file(
+            store,
+            FakeExecutor(),
+            sources_config,
+            "NOPE-1",
+            tmp_path / "x.sql",
+            config=CONFIG,
+            query_tag=QUERY_TAG,
+        )
+
+
 # --- dq rule set-sql --------------------------------------------------------------
 
 
@@ -235,6 +333,26 @@ def test_set_sql_does_not_write_on_validation_failure(store_path, sources_config
     updated = store.get_rule("SITE-900")
     assert updated["STATUS"] == "DRAFT"
     assert updated["CHECK_SQL"] is None
+
+
+def test_set_sql_does_not_write_when_the_check_returns_no_rows(
+    store_path, sources_config, tmp_path
+):
+    insert_rule(store_path, rule_code="SITE-900")
+    store = DuckDBStore(store_path)
+    executor = FakeExecutor()
+    executor.rule_tables["SITE-900"] = make_table([])
+    sql_path = tmp_path / "SITE-900.sql"
+    sql_path.write_text("SELECT s.ID FROM {{ src.SITE }} s")
+
+    result = rule_ops.set_rule_sql(
+        store, executor, sources_config, "SITE-900", sql_path, config=CONFIG, query_tag=QUERY_TAG
+    )
+
+    assert result["ok"] is False
+    assert result["stage"] == "validate"
+    assert any("no rows" in e for e in result["errors"])
+    assert store.get_rule("SITE-900")["STATUS"] == "DRAFT"
 
 
 def test_set_sql_missing_file_raises(store_path, sources_config):

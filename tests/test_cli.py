@@ -258,6 +258,25 @@ def test_validate_success(store_path, patch_executor):
     assert body["records_evaluated"] == 1
 
 
+def test_validate_with_file_is_a_dry_run(store_path, patch_executor, tmp_path):
+    insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT 1")
+    patch_executor.rule_tables["SITE-900"] = make_table([("r1", True), ("r2", False)])
+    sql_path = tmp_path / "candidate.sql"
+    sql_path.write_text("SELECT s.ID FROM {{ src.SITE }} s")
+
+    result = runner.invoke(cli.app, ["validate", "SITE-900", "--file", str(sql_path)])
+
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    assert body["records_evaluated"] == 2
+    con = duckdb.connect(str(store_path))
+    stored = con.execute(
+        "SELECT CHECK_SQL, VALIDATION_RESULT FROM DQ_RULE WHERE RULE_CODE = 'SITE-900'"
+    ).fetchone()
+    con.close()
+    assert stored == ("SELECT 1", None)
+
+
 def test_validate_failure_exits_nonzero(store_path, patch_executor):
     insert_rule(store_path, rule_code="SITE-900", check_sql="SELECT s.ID FROM {{ src.SITE }} s")
     patch_executor.rule_tables["SITE-900"] = make_table([(None, True)])  # null RECORD_ID

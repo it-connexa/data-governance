@@ -224,15 +224,40 @@ def rule_approve(
 
 
 @app.command("validate")
-def validate(code: str) -> None:
-    """Render, lint, execute, and return counts + column metadata. Never rows."""
+def validate(
+    code: str,
+    file: Annotated[
+        Path | None,
+        typer.Option(
+            "--file", help="Dry-run this candidate SQL file instead of the stored CHECK_SQL"
+        ),
+    ] = None,
+) -> None:
+    """Render, lint, execute, and return counts + column metadata. Never rows.
+    With --file, a dry run of a candidate file that writes nothing."""
     store, sources_config = _load_store_and_sources()
     executor = _make_executor()
     config = _engine_config(store)
     try:
-        result = rule_ops.validate_rule(
-            store, executor, sources_config, code, config=config, query_tag=_query_tag("validate")
-        )
+        if file is not None:
+            result = rule_ops.validate_sql_file(
+                store,
+                executor,
+                sources_config,
+                code,
+                file,
+                config=config,
+                query_tag=_query_tag("validate"),
+            )
+        else:
+            result = rule_ops.validate_rule(
+                store,
+                executor,
+                sources_config,
+                code,
+                config=config,
+                query_tag=_query_tag("validate"),
+            )
     except rule_ops.RuleOpsError as exc:
         _fail(str(exc))
     _print_json(result)

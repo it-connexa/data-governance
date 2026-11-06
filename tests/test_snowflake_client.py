@@ -42,7 +42,11 @@ class FakeCursor:
         self.params = params
         return self
 
-    def fetch_arrow_all(self):
+    def fetch_arrow_all(self, force_return_table=False):
+        # Like the real connector: a zero-row result is None unless asked for
+        # a table, which then still carries the column schema.
+        if self._table.num_rows == 0 and not force_return_table:
+            return None
         return self._table
 
 
@@ -80,6 +84,17 @@ def test_execute_returns_table_query_id_and_duration(settings, monkeypatch):
     assert result.query_id == "fake-query-id"
     assert result.duration_ms >= 0
     assert connection.closed is True
+
+
+def test_execute_returns_an_empty_table_with_its_schema_for_zero_rows(settings, monkeypatch):
+    empty = pa.table({"RECORD_ID": pa.array([], type=pa.string())})
+    client, _, _ = make_client(settings, empty, monkeypatch)
+
+    result = client.execute("SELECT 1 WHERE FALSE", query_tag="dq_poc:test:abc")
+
+    assert result.table is not None
+    assert result.table.num_rows == 0
+    assert result.table.schema.names == ["RECORD_ID"]
 
 
 def test_execute_passes_query_tag_and_timeout_as_session_parameters(settings, monkeypatch):

@@ -59,7 +59,8 @@ class SnowflakeClient:
                 cursor.execute(sql)
             else:
                 cursor.execute(sql, params)
-            table = cursor.fetch_arrow_all()
+            # force_return_table: a zero-row result is otherwise None, which has no schema
+            table = cursor.fetch_arrow_all(force_return_table=True)
             duration_ms = int((time.monotonic() - started) * 1000)
             return ExecutionResult(table=table, query_id=cursor.sfqid, duration_ms=duration_ms)
         finally:
