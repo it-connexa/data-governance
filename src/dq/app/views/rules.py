@@ -589,8 +589,7 @@ def _render_detail(rule: dict) -> None:
                 key=f"view_findings_{code}",
                 width="stretch",
             ):
-                st.session_state["_findings_jump_rule"] = code
-                st.switch_page(ui.PAGE_FINDINGS)
+                st.switch_page(ui.PAGE_FINDINGS, query_params={"rule": code})
 
     review_flag = store.get_rule_review_flag(code)
     if review_flag:

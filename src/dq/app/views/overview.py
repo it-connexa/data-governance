@@ -274,8 +274,7 @@ else:
     if event.selection["rows"]:
         picked = table_rows[event.selection["rows"][0]]["Rule"]
         if st.button(f"View open findings for {picked}", key=f"results_view_{picked}"):
-            st.session_state["_findings_jump_rule"] = picked
-            st.switch_page(ui.PAGE_FINDINGS)
+            st.switch_page(ui.PAGE_FINDINGS, query_params={"rule": picked})
     else:
         st.caption("Tick a rule to jump to its open findings.")
 

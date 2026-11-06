@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from dq import finding_ops
 from dq.store.base import GovernanceStore
 
 NZ_TZ = ZoneInfo("Pacific/Auckland")
@@ -263,6 +264,58 @@ def rule_pill_counts(rules: list[dict], *, flagged_codes: set[str]) -> dict[str,
     }
 
 
+# --- Findings: status pills and the rules a view covers ----------------------------------
+
+FINDING_PILLS = ["Open", "Accepted", "False positive", "Resolved", "Lapsing"]
+_FINDING_PILL_STATUS = {
+    "Open": "OPEN",
+    "Accepted": "ACCEPTED_EXCEPTION",
+    "False positive": "FALSE_POSITIVE",
+    "Resolved": "RESOLVED",
+}
+
+
+def finding_in_pill(finding: dict, pill: str, *, now: datetime | None = None) -> bool:
+    """Whether a finding belongs to a status pill. "Lapsing" is the accepted
+    exceptions that have lapsed or lapse soon, so it overlaps "Accepted"."""
+    if pill == "Lapsing":
+        return finding_ops.is_lapsing(finding, now=now)
+    return finding["STATUS"] == _FINDING_PILL_STATUS[pill]
+
+
+def finding_pill_counts(findings: list[dict], *, now: datetime | None = None) -> dict[str, int]:
+    return {
+        pill: sum(1 for f in findings if finding_in_pill(f, pill, now=now))
+        for pill in FINDING_PILLS
+    }
+
+
+def rules_in_view(findings: list[dict]) -> list[dict]:
+    """The distinct rules behind a set of findings, most severe first, each
+    with its plain-English statement and how many of the findings it raised."""
+    by_code: dict[str, dict] = {}
+    for f in findings:
+        entry = by_code.setdefault(
+            f["RULE_CODE"],
+            {
+                "code": f["RULE_CODE"],
+                "name": f["RULE_NAME"],
+                "severity": f["SEVERITY"],
+                "statement": f.get("RULE_STATEMENT") or "",
+                "owner_email": f["OWNER_EMAIL"],
+                "findings": 0,
+            },
+        )
+        entry["findings"] += 1
+
+    def severity_rank(severity: str) -> int:
+        return SEVERITIES.index(severity) if severity in SEVERITIES else len(SEVERITIES)
+
+    return sorted(
+        by_code.values(), key=lambda r: (severity_rank(r["severity"]), -r["findings"], r["code"])
+    )
+
+
 # --- Page chrome (st.*) ---------------------------------------------------------------
 
 # One place for the CSS that tightens Streamlit's default spacing and styles the
@@ -284,6 +337,16 @@ _LAYOUT_CSS = """
 [data-testid="stLayoutWrapper"]:has(> .st-key-rules_list),
 [data-testid="stLayoutWrapper"]:has(> .st-key-findings_list) {
   height: calc(100vh - 14.9rem) !important; flex-basis: auto !important; min-height: 280px; }
+/* The Findings chip row, when shown, takes a row of height from the panes below it. */
+[data-testid="stMainBlockContainer"]:has(.st-key-findings_chips)
+  [data-testid="stLayoutWrapper"]:has(> .st-key-findings_detail) {
+  height: calc(100vh - 15.9rem) !important; }
+[data-testid="stMainBlockContainer"]:has(.st-key-findings_chips)
+  [data-testid="stLayoutWrapper"]:has(> .st-key-findings_list) {
+  height: calc(100vh - 17.9rem) !important; }
+/* Children must not shrink to fit: when content is taller than the pane it scrolls instead. */
+.st-key-rules_detail > *, .st-key-rules_list > *,
+.st-key-findings_detail > *, .st-key-findings_list > * { flex-shrink: 0; }
 .st-key-rules_list button { justify-content: flex-start; height: auto; padding: 0.4rem 0.7rem;
   border: 1px solid transparent; }
 .st-key-rules_list button > div, .st-key-rules_list button > div > span { width: 100%;

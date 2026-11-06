@@ -291,3 +291,105 @@ def test_current_owner_ignores_a_remembered_owner_who_no_longer_exists():
     st.session_state["acting_as_email"] = "gone@example.test"
     assert ui.current_owner(_FakeOwners())["DISPLAY_NAME"] == "Alice"
     st.session_state.clear()
+
+
+# --- findings pills and rules in view -----------------------------------------------------
+
+_FINDINGS = [
+    {
+        "STATUS": "OPEN",
+        "RULE_CODE": "A",
+        "RULE_NAME": "Alpha",
+        "SEVERITY": "LOW",
+        "RULE_STATEMENT": "A holds",
+        "OWNER_EMAIL": "o@x",
+    },
+    {
+        "STATUS": "OPEN",
+        "RULE_CODE": "B",
+        "RULE_NAME": "Beta",
+        "SEVERITY": "CRITICAL",
+        "RULE_STATEMENT": "B holds",
+        "OWNER_EMAIL": "o@x",
+    },
+    {
+        "STATUS": "OPEN",
+        "RULE_CODE": "B",
+        "RULE_NAME": "Beta",
+        "SEVERITY": "CRITICAL",
+        "RULE_STATEMENT": "B holds",
+        "OWNER_EMAIL": "o@x",
+    },
+    {
+        "STATUS": "ACCEPTED_EXCEPTION",
+        "RULE_CODE": "A",
+        "RULE_NAME": "Alpha",
+        "SEVERITY": "LOW",
+        "RULE_STATEMENT": "A holds",
+        "OWNER_EMAIL": "o@x",
+        "DISPOSITION_EXPIRES_AT": NOW + timedelta(days=5),
+    },
+    {
+        "STATUS": "ACCEPTED_EXCEPTION",
+        "RULE_CODE": "A",
+        "RULE_NAME": "Alpha",
+        "SEVERITY": "LOW",
+        "RULE_STATEMENT": "A holds",
+        "OWNER_EMAIL": "o@x",
+        "DISPOSITION_EXPIRES_AT": NOW + timedelta(days=300),
+    },
+    {
+        "STATUS": "FALSE_POSITIVE",
+        "RULE_CODE": "A",
+        "RULE_NAME": "Alpha",
+        "SEVERITY": "LOW",
+        "RULE_STATEMENT": "A holds",
+        "OWNER_EMAIL": "o@x",
+    },
+    {
+        "STATUS": "RESOLVED",
+        "RULE_CODE": "A",
+        "RULE_NAME": "Alpha",
+        "SEVERITY": "LOW",
+        "RULE_STATEMENT": "A holds",
+        "OWNER_EMAIL": "o@x",
+    },
+]
+
+
+def test_finding_pill_counts_cover_every_status_and_lapsing_exceptions():
+    counts = ui.finding_pill_counts(_FINDINGS, now=NOW)
+    assert counts == {"Open": 3, "Accepted": 2, "False positive": 1, "Resolved": 1, "Lapsing": 1}
+
+
+def test_finding_in_pill_lapsing_is_a_subset_of_accepted():
+    soon = _FINDINGS[3]
+    far = _FINDINGS[4]
+    assert ui.finding_in_pill(soon, "Accepted", now=NOW) and ui.finding_in_pill(
+        soon, "Lapsing", now=NOW
+    )
+    assert ui.finding_in_pill(far, "Accepted", now=NOW) and not ui.finding_in_pill(
+        far, "Lapsing", now=NOW
+    )
+    assert not ui.finding_in_pill(_FINDINGS[0], "Resolved", now=NOW)
+
+
+def test_rules_in_view_groups_by_rule_most_severe_first_with_counts():
+    rules = ui.rules_in_view(_FINDINGS)
+    assert [r["code"] for r in rules] == ["B", "A"]  # critical before low
+    assert rules[0] == {
+        "code": "B",
+        "name": "Beta",
+        "severity": "CRITICAL",
+        "statement": "B holds",
+        "owner_email": "o@x",
+        "findings": 2,
+    }
+    assert rules[1]["findings"] == 5
+
+
+def test_rules_in_view_copes_with_a_missing_statement():
+    rules = ui.rules_in_view(
+        [{"RULE_CODE": "A", "RULE_NAME": "Alpha", "SEVERITY": "LOW", "OWNER_EMAIL": "o@x"}]
+    )
+    assert rules[0]["statement"] == ""
