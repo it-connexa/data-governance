@@ -277,3 +277,29 @@ def test_is_lapsing_matches_the_summary_for_expiring_and_lapsed_exceptions():
     assert not finding_ops.is_lapsing(no_expiry, now=NOW)
     assert not finding_ops.is_lapsing({"STATUS": "OPEN"}, now=NOW)
     assert not finding_ops.is_lapsing({"STATUS": "FALSE_POSITIVE"}, now=NOW)
+
+
+# --- summarise_run (what changed in one run) ------------------------------------------
+
+
+def test_summarise_run_counts_new_and_resolved_in_that_run_only():
+    findings = [
+        {"STATUS": "OPEN", "FIRST_SEEN_RUN_ID": "run-2", "RESOLVED_RUN_ID": None},
+        {"STATUS": "OPEN", "FIRST_SEEN_RUN_ID": "run-2", "RESOLVED_RUN_ID": None},
+        {"STATUS": "OPEN", "FIRST_SEEN_RUN_ID": "run-1", "RESOLVED_RUN_ID": None},
+        {"STATUS": "RESOLVED", "FIRST_SEEN_RUN_ID": "run-1", "RESOLVED_RUN_ID": "run-2"},
+        {"STATUS": "RESOLVED", "FIRST_SEEN_RUN_ID": "run-1", "RESOLVED_RUN_ID": "run-1"},
+        {"STATUS": "FALSE_POSITIVE", "FIRST_SEEN_RUN_ID": "run-2", "RESOLVED_RUN_ID": None},
+    ]
+
+    change = finding_ops.summarise_run(findings, "run-2")
+
+    assert change.new == 3  # first seen in run-2, whatever happened to them since
+    assert change.resolved == 1
+
+
+def test_summarise_run_with_no_run_or_no_findings_is_zero():
+    assert finding_ops.summarise_run([], "run-1") == finding_ops.RunChange(new=0, resolved=0)
+    assert finding_ops.summarise_run(
+        [{"FIRST_SEEN_RUN_ID": "a", "RESOLVED_RUN_ID": None}], None
+    ) == (finding_ops.RunChange(new=0, resolved=0))

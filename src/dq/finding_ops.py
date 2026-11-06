@@ -40,6 +40,12 @@ class FindingSummary:
     resolved: int
 
 
+@dataclass(frozen=True)
+class RunChange:
+    new: int  # findings first raised in the run
+    resolved: int  # findings the run found fixed
+
+
 def _require_reason(reason: str) -> str:
     if not reason or not reason.strip():
         raise FindingOpsError("A reason is required")
@@ -279,4 +285,14 @@ def summarise(findings: list[dict[str, Any]], *, now: datetime | None = None) ->
         expired=expired,
         false_positive=false_positive,
         resolved=resolved,
+    )
+
+
+def summarise_run(findings: list[dict[str, Any]], run_id: str | None) -> RunChange:
+    """What one run changed: findings first seen in it, and findings it resolved."""
+    if run_id is None:
+        return RunChange(new=0, resolved=0)
+    return RunChange(
+        new=sum(1 for f in findings if f.get("FIRST_SEEN_RUN_ID") == run_id),
+        resolved=sum(1 for f in findings if f.get("RESOLVED_RUN_ID") == run_id),
     )
