@@ -356,7 +356,7 @@ def test_run_with_no_active_rules_still_succeeds(store_path, patch_executor):
     assert body["rules_attempted"] == 0
 
 
-def test_run_generates_narratives_by_default(store_path, patch_executor, patch_completer):
+def test_run_generates_narratives_when_asked(store_path, patch_executor, patch_completer):
     insert_rule(store_path, rule_code="SITE-900", status="ACTIVE", check_sql="SELECT 1")
     patch_executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
     con = duckdb.connect(str(store_path))
@@ -369,13 +369,23 @@ def test_run_generates_narratives_by_default(store_path, patch_executor, patch_c
     )
     con.close()
 
-    result = runner.invoke(cli.app, ["run", "--manual"])
+    result = runner.invoke(cli.app, ["run", "--manual", "--narratives"])
 
     assert result.exit_code == 0
     assert patch_completer.calls == 1
 
 
-def test_run_no_narratives_flag_skips_cortex(store_path, patch_executor, patch_completer):
+def test_run_does_not_write_narratives_unless_asked(store_path, patch_executor, patch_completer):
+    insert_rule(store_path, rule_code="SITE-900", status="ACTIVE", check_sql="SELECT 1")
+    patch_executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
+
+    result = runner.invoke(cli.app, ["run", "--manual"])
+
+    assert result.exit_code == 0
+    assert patch_completer.calls == 0
+
+
+def test_run_still_accepts_the_old_no_narratives_flag(store_path, patch_executor, patch_completer):
     insert_rule(store_path, rule_code="SITE-900", status="ACTIVE", check_sql="SELECT 1")
     patch_executor.rule_tables["SITE-900"] = make_table([("r1", False), ("r2", True)])
 

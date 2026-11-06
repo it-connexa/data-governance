@@ -273,14 +273,17 @@ def run(
     manual: Annotated[
         bool, typer.Option("--manual", help="Mark this as a manually triggered run")
     ] = False,
-    no_narratives: Annotated[
+    narratives: Annotated[
         bool,
-        typer.Option("--no-narratives", help="Skip the Cortex owner narratives after the run"),
+        typer.Option(
+            "--narratives/--no-narratives",
+            help="Also write a Cortex narrative per owner after the run (off by default)",
+        ),
     ] = False,
 ) -> None:
     """Full engine run (brief §10.1): render, lint, execute and validate
     every ACTIVE rule, apply the finding lifecycle, score sites and write
-    object rollups, then a Cortex narrative per owner (unless --no-narratives).
+    object rollups, plus a Cortex narrative per owner when --narratives is given.
     Writes the governance store; never prints row data."""
     store, sources_config = _load_store_and_sources()
     executor = _make_executor()
@@ -299,7 +302,7 @@ def run(
         triggered_by=getpass.getuser(),
         started_at=datetime.now(UTC),
         source_freshness=freshness,
-        narrator=None if no_narratives else _make_completer(),
+        narrator=_make_completer() if narratives else None,
     )
 
     _print_json(
