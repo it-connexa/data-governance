@@ -1,0 +1,47 @@
+# Synthetic sources.yml for the per-source database/schema/freshness tests.
+# Fake names only. Kept separate from sources_test.yml so the many tests that
+# count every source in that file don't change.
+
+snowflake:
+  database: TESTDB
+  schema: TESTSCHEMA
+
+default_filters:
+  - "COALESCE(_FIVETRAN_DELETED, FALSE) = FALSE"
+
+freshness_column: _FIVETRAN_SYNCED
+
+sources:
+  SITE:
+    table: SITE__C
+    sf_object: Site__c
+    record_label: sites
+    description: Raw site source using the file-level database and schema
+    columns: ["*"]
+    filters: []
+
+  RPT_PROJECT:
+    database: REPDB
+    schema: REPSCHEMA
+    table: RPT_PROJECT
+    sf_object: Project__c
+    record_label: projects
+    description: Reporting-layer projects, one row per project
+    grain: One row per project
+    not_for: Project history; use RPT_PROJECT_HISTORY for that
+    columns: ["*"]
+    filters: []
+    apply_default_filters: false
+    freshness_column: LOADED_AT
+
+  RPT_NO_FRESHNESS:
+    schema: REPSCHEMA
+    table: RPT_MILESTONES
+    sf_object: Project__c
+    record_label: projects
+    item_label: milestones
+    description: Reporting-layer unpivoted milestones with no refresh timestamp
+    columns: ["*"]
+    filters: []
+    apply_default_filters: false
+    check_freshness: false

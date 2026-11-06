@@ -235,13 +235,15 @@ def _count_object(
 def collect_source_freshness(
     executor: RuleExecutor, sources_config: SourcesConfig, *, query_tag: str
 ) -> dict[str, datetime | None]:
-    """MAX(freshness_column) per source (brief §10.1 step 1)."""
+    """MAX(freshness column) per source (brief §10.1 step 1). A source with
+    no freshness check (e.g. a reporting table with no refresh timestamp) is
+    left out."""
     freshness: dict[str, datetime | None] = {}
     for name in sources_config.sources:
-        sql = render(
-            f"SELECT MAX({sources_config.freshness_column}) FROM {{{{ src.{name} }}}}",
-            sources_config,
-        )
+        column = sources_config.freshness_column_for(name)
+        if column is None:
+            continue
+        sql = render(f"SELECT MAX({column}) FROM {{{{ src.{name} }}}}", sources_config)
         freshness[name] = executor.scalar(name, sql, query_tag=query_tag)
     return freshness
 

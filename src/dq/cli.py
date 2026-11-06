@@ -126,6 +126,14 @@ def catalogue_show(
     _print_json(rows)
 
 
+@catalogue_app.command("sources")
+def catalogue_sources() -> None:
+    """Print the source registry from sources.yml: each logical source's table,
+    description, grain and what it is not for. Config only, no Snowflake."""
+    _, sources_config = _load_store_and_sources()
+    _print_json(catalogue.describe_sources(sources_config))
+
+
 # --- dq rule ---------------------------------------------------------------------
 
 

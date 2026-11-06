@@ -213,3 +213,99 @@ def test_resolve_target_source_passes_through_known_sources():
 
 def test_resolve_target_source_maps_milestone_to_project():
     assert resolve_target_source("MILESTONE") == "PROJECT"
+
+
+# --- per-source database / schema / freshness / registry fields ----------------
+
+
+@pytest.fixture
+def multi(fixtures_dir):
+    return load_sources(fixtures_dir / "sources_multi_schema_test.yml")
+
+
+def test_source_location_defaults_to_file_level_database_and_schema(multi):
+    assert multi.location("SITE") == ("TESTDB", "TESTSCHEMA")
+
+
+def test_source_location_honours_per_source_overrides(multi):
+    assert multi.location("RPT_PROJECT") == ("REPDB", "REPSCHEMA")
+
+
+def test_source_location_can_override_only_the_schema(multi):
+    assert multi.location("RPT_NO_FRESHNESS") == ("TESTDB", "REPSCHEMA")
+
+
+def test_source_location_unknown_source_raises(multi):
+    with pytest.raises(UnknownSourceError, match="NOPE"):
+        multi.location("NOPE")
+
+
+def test_registry_fields_default_to_empty(multi):
+    site = multi.sources["SITE"]
+    assert site.grain == ""
+    assert site.not_for == ""
+
+
+def test_registry_fields_are_loaded(multi):
+    project = multi.sources["RPT_PROJECT"]
+    assert project.grain == "One row per project"
+    assert "RPT_PROJECT_HISTORY" in project.not_for
+
+
+def test_freshness_column_for_defaults_to_file_level_column(multi):
+    assert multi.freshness_column_for("SITE") == "_FIVETRAN_SYNCED"
+
+
+def test_freshness_column_for_honours_per_source_override(multi):
+    assert multi.freshness_column_for("RPT_PROJECT") == "LOADED_AT"
+
+
+def test_freshness_column_for_is_none_when_freshness_check_is_off(multi):
+    assert multi.freshness_column_for("RPT_NO_FRESHNESS") is None
+
+
+def test_render_uses_per_source_database_and_schema(multi):
+    rendered = render("SELECT p.ID FROM {{ src.RPT_PROJECT }} p", multi)
+
+    assert "REPDB.REPSCHEMA.RPT_PROJECT" in rendered
+    assert "TESTDB" not in rendered
+    assert "_FIVETRAN_DELETED" not in rendered  # apply_default_filters: false
+
+
+def test_render_mixes_sources_from_different_schemas(multi):
+    rendered = render(
+        "SELECT 1 FROM {{ src.SITE }} s JOIN {{ src.RPT_NO_FRESHNESS }} m ON m.ID = s.ID", multi
+    )
+
+    assert "TESTDB.TESTSCHEMA.SITE__C" in rendered
+    assert "TESTDB.REPSCHEMA.RPT_MILESTONES" in rendered
+
+
+def test_lint_rejects_override_schema_reference(multi):
+    with pytest.raises(LintError, match="database or schema"):
+        lint("SELECT p.ID FROM REPSCHEMA.RPT_PROJECT p", multi)
+
+
+def test_lint_rejects_override_database_name_in_text(multi):
+    with pytest.raises(LintError, match="REPDB"):
+        lint("SELECT p.ID FROM {{ src.RPT_PROJECT }} p WHERE p.NOTE = 'REPDB'", multi)
+
+
+def test_lint_rejects_override_three_part_identifier(multi):
+    with pytest.raises(LintError, match="three-part"):
+        lint("SELECT p.ID FROM REPDB.REPSCHEMA.RPT_PROJECT p", multi)
+
+
+def test_lint_still_rejects_file_level_names_when_overrides_exist(multi):
+    with pytest.raises(LintError, match="database or schema"):
+        lint("SELECT s.ID FROM TESTSCHEMA.SITE__C s", multi)
+
+
+def test_lint_allows_raw_names_inside_comments(multi):
+    # Real database and schema names ("PROD", "REPORTING") are ordinary English
+    # words, so a header comment that mentions one must not fail the lint.
+    lint(
+        "-- reads the REPSCHEMA table via the registry; REPDB is not referenced\n"
+        "SELECT p.ID AS RECORD_ID FROM {{ src.RPT_PROJECT }} p /* REPDB */",
+        multi,
+    )

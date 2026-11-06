@@ -210,6 +210,16 @@ def test_catalogue_show(store_path):
     assert rows[0]["COLUMN_NAME"] == "ID"
 
 
+def test_catalogue_sources_prints_registry_without_snowflake():
+    result = runner.invoke(cli.app, ["catalogue", "sources"])
+
+    assert result.exit_code == 0
+    rows = {r["source"]: r for r in json.loads(result.output)}
+    assert rows["SITE"]["table"] == "TESTDB.TESTSCHEMA.SITE__C"
+    assert rows["PROJECT"]["record_label"] == "projects"
+    assert set(rows["SITE"]) >= {"description", "grain", "not_for", "freshness_column"}
+
+
 # --- dq validate / dq rule set-sql (need a fake Snowflake executor) -----------
 
 

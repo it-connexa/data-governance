@@ -64,6 +64,16 @@ class Source:
     filters: list[str]
     item_label: str | None = None
     apply_default_filters: bool = True
+    # Per-source overrides of the file-level database/schema/freshness column,
+    # for tables that live elsewhere (e.g. the reporting layer).
+    database: str | None = None
+    schema: str | None = None
+    freshness_column: str | None = None
+    check_freshness: bool = True
+    # Registry fields: how a rule author (human or AI) chooses between
+    # similar-looking tables. `description` says what the table is for.
+    grain: str = ""  # what one row is
+    not_for: str = ""  # what to use a different source for
 
 
 @dataclass(frozen=True)
@@ -73,6 +83,31 @@ class SourcesConfig:
     default_filters: list[str]
     freshness_column: str
     sources: dict[str, Source]
+
+    def location(self, name: str) -> tuple[str, str]:
+        """(database, schema) a source lives in, honouring per-source overrides."""
+        source = _get_source(name, self)
+        return source.database or self.database, source.schema or self.schema
+
+    def table_ref(self, name: str) -> str:
+        """Fully qualified DATABASE.SCHEMA.TABLE for a source."""
+        database, schema = self.location(name)
+        return f"{database}.{schema}.{self.sources[name].table}"
+
+    def freshness_column_for(self, name: str) -> str | None:
+        """The column to take MAX() of for a source's freshness, or None when
+        the source has no freshness check."""
+        source = _get_source(name, self)
+        if not source.check_freshness:
+            return None
+        return source.freshness_column or self.freshness_column
+
+    def raw_location_names(self) -> set[str]:
+        """Every database and schema name rule SQL must never spell out."""
+        names = {self.database, self.schema}
+        for source in self.sources.values():
+            names.update(n for n in (source.database, source.schema) if n)
+        return names
 
 
 def load_sources(path: Path) -> SourcesConfig:
@@ -91,6 +126,12 @@ def load_sources(path: Path) -> SourcesConfig:
             filters=entry.get("filters", []),
             item_label=entry.get("item_label"),
             apply_default_filters=entry.get("apply_default_filters", True),
+            database=entry.get("database"),
+            schema=entry.get("schema"),
+            freshness_column=entry.get("freshness_column"),
+            check_freshness=entry.get("check_freshness", True),
+            grain=entry.get("grain", ""),
+            not_for=entry.get("not_for", ""),
         )
         for name, entry in raw["sources"].items()
     }
@@ -124,8 +165,7 @@ def _render_source(name: str, config: SourcesConfig) -> str:
     if conditions:
         where_sql = " WHERE " + " AND ".join(f"({c})" for c in conditions)
 
-    table_ref = f"{config.database}.{config.schema}.{source.table}"
-    return f"(SELECT {columns_sql} FROM {table_ref}{where_sql})"
+    return f"(SELECT {columns_sql} FROM {config.table_ref(name)}{where_sql})"
 
 
 def render(sql: str, config: SourcesConfig) -> str:
@@ -150,6 +190,9 @@ def lint(sql: str, config: SourcesConfig) -> None:
     """Lint unrendered rule SQL per brief §8. Raises LintError on any violation."""
     violations: list[str] = []
     substituted = _stub_placeholders(sql)
+
+    raw_names = config.raw_location_names()
+    raw_names_upper = {n.upper() for n in raw_names}
 
     try:
         tokens = list(sqlglot.tokenize(substituted, read=_DIALECT))
@@ -186,7 +229,7 @@ def lint(sql: str, config: SourcesConfig) -> None:
                     f"three-part identifier '{table.sql()}' is not allowed; "
                     "reference sources via {{ src.NAME }}"
                 )
-            elif table.db and table.db.upper() in (config.database.upper(), config.schema.upper()):
+            elif table.db and table.db.upper() in raw_names_upper:
                 violations.append(
                     f"'{table.sql()}' references the database or schema directly; "
                     "use {{ src.NAME }} instead"
@@ -204,11 +247,13 @@ def lint(sql: str, config: SourcesConfig) -> None:
                 "the check must return the full applicable population"
             )
 
-    # Defence in depth: the role is read-only anyway, but also reject the raw
-    # database/schema name appearing anywhere in the text (string literals,
-    # dynamic identifiers) even when it isn't a structured table reference.
-    for raw_name in (config.database, config.schema):
-        if re.search(rf"\b{re.escape(raw_name)}\b", substituted, re.IGNORECASE):
+    # Defence in depth: the role is read-only anyway, but also reject a raw
+    # database/schema name appearing in any identifier or string literal, even
+    # when it isn't a structured table reference. Comments are excluded: real
+    # names such as "PROD" and "REPORTING" are ordinary words that headers use.
+    code_text = "\n".join(t.text for t in tokens)
+    for raw_name in sorted(raw_names):
+        if re.search(rf"\b{re.escape(raw_name)}\b", code_text, re.IGNORECASE):
             violations.append(
                 f"'{raw_name}' references the database or schema directly; "
                 "it must not appear in rule SQL"

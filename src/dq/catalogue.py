@@ -42,10 +42,11 @@ def refresh(
     counts: dict[str, int] = {}
 
     for name, source in sources_config.sources.items():
+        database, schema = sources_config.location(name)
         sql = (
             "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, ORDINAL_POSITION, COMMENT "
-            f"FROM {sources_config.database}.INFORMATION_SCHEMA.COLUMNS "
-            f"WHERE TABLE_SCHEMA = '{sources_config.schema}' AND TABLE_NAME = '{source.table}' "
+            f"FROM {database}.INFORMATION_SCHEMA.COLUMNS "
+            f"WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{source.table}' "
             "ORDER BY ORDINAL_POSITION"
         )
         result = snowflake_client.execute(sql, query_tag=query_tag)
@@ -53,7 +54,7 @@ def refresh(
         if not columns:
             raise CatalogueError(
                 f"No columns found for source '{name}' "
-                f"({sources_config.database}.{sources_config.schema}.{source.table}); "
+                f"({sources_config.table_ref(name)}); "
                 "check the table name in sources.yml"
             )
         store.upsert_source_columns(name, columns, refreshed_at)
@@ -82,6 +83,24 @@ def load_labels(store: GovernanceStore, csv_path: Path | str) -> int:
             labels.append((row["source"], row["column_name"].upper(), row["label"]))
 
     return store.update_column_labels(labels)
+
+
+def describe_sources(sources_config: SourcesConfig) -> list[dict[str, Any]]:
+    """The source registry from sources.yml: where each logical source lives
+    and how to tell it from look-alikes. Config only, no Snowflake call."""
+    return [
+        {
+            "source": name,
+            "table": sources_config.table_ref(name),
+            "description": source.description,
+            "grain": source.grain,
+            "not_for": source.not_for,
+            "record_label": source.record_label,
+            "item_label": source.item_label,
+            "freshness_column": sources_config.freshness_column_for(name),
+        }
+        for name, source in sources_config.sources.items()
+    ]
 
 
 def show(

@@ -395,6 +395,28 @@ def test_collect_source_freshness_renders_all_sources(sources_config):
     assert set(freshness) == set(sources_config.sources)
 
 
+def test_collect_source_freshness_uses_each_sources_column_and_skips_disabled(fixtures_dir):
+    config = load_sources(fixtures_dir / "sources_multi_schema_test.yml")
+
+    class RecordingExecutor(FakeExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sql: dict[str, str] = {}
+
+        def scalar(self, label, sql, *, query_tag):
+            self.sql[label] = sql
+            return T1
+
+    executor = RecordingExecutor()
+
+    freshness = engine.collect_source_freshness(executor, config, query_tag="dq_poc:run:1")
+
+    assert set(freshness) == {"SITE", "RPT_PROJECT"}  # RPT_NO_FRESHNESS is skipped
+    assert "MAX(_FIVETRAN_SYNCED)" in executor.sql["SITE"]
+    assert "MAX(LOADED_AT)" in executor.sql["RPT_PROJECT"]
+    assert "REPDB.REPSCHEMA.RPT_PROJECT" in executor.sql["RPT_PROJECT"]
+
+
 # --- narratives hook (brief §10.1 step 6) ----------------------------------------
 
 
