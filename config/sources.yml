@@ -14,6 +14,16 @@
 #
 # record_label: plural noun used in headline totals
 #               ("of 1,546 sites, 45 exceptions").
+#
+# Optional per-source fields, for tables outside the file-level database and
+# schema (e.g. the reporting layer):
+#   database / schema   override the file-level snowflake.database / .schema
+#   freshness_column    override the file-level freshness_column
+#   check_freshness     false = no freshness check (table has no refresh timestamp)
+#   grain               what one row is ("one row per project per milestone")
+#   not_for             what to use a different source for. Together with
+#                       `description`, this is how a rule author tells similar
+#                       tables apart. `dq catalogue sources` prints them.
 # =====================================================================
 
 snowflake:
@@ -69,8 +79,34 @@ sources:
     columns: ["*"]
     filters: []
 
+  # Reporting layer. Milestones are the one place the raw tables are too awkward
+  # (100+ wide forecast/actual column pairs, and some backend column names don't
+  # match what Sitetracker shows, e.g. "Tower Installed Finished" is stored as
+  # TOWER_INSTALL_START_*). The reporting table is unpivoted and carries the
+  # front-end milestone names. SITE and PROJECT stay on the raw tables.
+  #
+  # TODO after `dq catalogue refresh` + `dq catalogue show MILESTONES`: confirm
+  # grain, fill in not_for, and decide apply_default_filters (the reporting table
+  # may not have _FIVETRAN_DELETED / IS_DELETED, so they are off for now).
+  MILESTONES:
+    database: PROD
+    schema: REPORTING
+    table: RPT_PROJECT_UNPIVOT_MILESTONES
+    sf_object: <MILESTONE_OBJECT_API_NAME>
+    record_label: projects                   # a milestone rule's record is a project
+    item_label: milestones
+    description: >
+      Unpivoted project milestones using the front-end (Sitetracker) milestone
+      names. Rules filter on the milestone name instead of picking columns.
+    grain: Expected one row per project per milestone (confirm against the catalogue)
+    not_for: ""                              # fill in once look-alike tables are known
+    columns: ["*"]
+    filters: []
+    apply_default_filters: false
+    check_freshness: false                   # refreshed daily; no timestamp column known yet
+
   PROJECT_TEMPLATE:
-    table: SITETRACKER_PROJECT_TEMPLATE_C 
+    table: SITETRACKER_PROJECT_TEMPLATE_C
     sf_object: <PROJECT_TEMPLATE_OBJECT_API_NAME>
     record_label: templates
     description: Project templates; rules join on template name to scope milestone checks
