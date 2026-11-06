@@ -85,9 +85,16 @@ sources:
   # TOWER_INSTALL_START_*). The reporting table is unpivoted and carries the
   # front-end milestone names. SITE and PROJECT stay on the raw tables.
   #
-  # TODO after `dq catalogue refresh` + `dq catalogue show MILESTONES`: confirm
-  # grain, fill in not_for, and decide apply_default_filters (the reporting table
-  # may not have _FIVETRAN_DELETED / IS_DELETED, so they are off for now).
+  # Catalogue refreshed 2026-11-06 (21 columns): PROJECT_ID, PROJECT_TRAN_ID, SITE_ID,
+  # SITE_NAME, PROJECT_TEMPLATE_NAME, MILESTONE_NAME, ACTUAL_DATE, FORECAST_DATE,
+  # COMPLETION_DATE, COMPLETION_TYPE and some customer/programme/financial-year
+  # columns. It has no _FIVETRAN_DELETED / IS_DELETED, no project name or status,
+  # and no refresh timestamp, so the default filters and freshness check stay off.
+  # Confirmed 2026-11-06: one row per project per milestone (row count equals
+  # project count for every milestone). PROJECT_TRAN_ID is the Salesforce project ID
+  # (joins to PROJECT.ID); PROJECT_ID is the project name. The view omits some
+  # projects that exist in the raw tables (38 active New Site projects).
+  # TODO: what COMPLETION_DATE / COMPLETION_TYPE mean, and fill in not_for.
   MILESTONES:
     database: PROD
     schema: REPORTING
@@ -98,12 +105,44 @@ sources:
     description: >
       Unpivoted project milestones using the front-end (Sitetracker) milestone
       names. Rules filter on the milestone name instead of picking columns.
-    grain: Expected one row per project per milestone (confirm against the catalogue)
+    grain: One row per project per milestone. PROJECT_TRAN_ID is the Salesforce project ID; PROJECT_ID is the project name
     not_for: ""                              # fill in once look-alike tables are known
     columns: ["*"]
     filters: []
     apply_default_filters: false
     check_freshness: false                   # refreshed daily; no timestamp column known yet
+
+  # Reporting-layer projects: the business's own definition of which projects are
+  # in scope to report on. Per Kevin, the view excludes test sites
+  # (SITE_NAME_SEARCH LIKE '%TEST%') and limits templates to New Site,
+  # Modification / Upgrade, Co-Location, Co-Location Old and Co-Lo Initial
+  # Assessment. Catalogue read and checked 2026-11-06 (100 columns, 1,075 projects):
+  # one row per project, and every row joins exactly one raw PROJECT by name.
+  # It has no Salesforce ID, no template name and no refresh timestamp. Use it as
+  # the scope list: JOIN {{ src.WIP_PROJECT }} w ON w.PROJECT_NAME = p.NAME.
+  # The 70+ MILESTONE_nX / MILESTONE_nX_DATE columns are report layout; do not
+  # read milestone dates from them.
+  WIP_PROJECT:
+    database: PROD
+    schema: REPORTING
+    table: RPT_WIP_PROJECT_DETAIL
+    sf_object: <PROJECT_OBJECT_API_NAME>
+    record_label: projects
+    description: >
+      Reporting-layer projects, filtered to the projects the business reports on
+      (no test sites; New Site, Modification / Upgrade and Co-Location templates).
+    grain: >
+      One row per project (project names are unique). PROJECT_COUNT and
+      PROJECT_ROW_NUM number the projects on a site. No Salesforce ID, so join to
+      PROJECT on PROJECT_NAME = NAME.
+    not_for: >
+      Milestone dates (use MILESTONES), record IDs or deep links (it has no
+      Salesforce ID; take RECORD_ID from PROJECT), and anything about projects
+      outside the reporting scope (use PROJECT).
+    columns: ["*"]
+    filters: []
+    apply_default_filters: false
+    check_freshness: false                   # refreshed daily; no timestamp column
 
   PROJECT_TEMPLATE:
     table: SITETRACKER_PROJECT_TEMPLATE_C
