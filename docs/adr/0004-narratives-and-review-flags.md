@@ -1,6 +1,6 @@
 # ADR 0004: Narratives send aggregates only; the review flag is a history row
 
-**Status:** Accepted
+**Status:** Accepted. The narrative's place in the app and its default generation were changed by [ADR 0005](0005-ux-shell-and-dormant-narratives.md).
 
 ## Context
 

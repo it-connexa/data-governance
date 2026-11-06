@@ -18,14 +18,13 @@ uv sync
 uv run streamlit run src/dq/app/streamlit_app.py
 ```
 
-It opens at http://localhost:8501. Pick who you're acting as in the sidebar, then:
+It opens at http://localhost:8501. Pick who you're acting as at the top right, then use the three pages in the bar across the top:
 
 | Page | Use it to |
 |---|---|
-| **Rule Catalogue** | browse rules and manage each one: edit, submit, clarify, confirm, approve, retire, delete |
-| **Add rule** | write a new rule in plain English |
-| **Findings** | accept exceptions, mark false positives or revoke, singly or in bulk |
-| **Run results** | see the latest run, trends, site scores and your narrative, or **Run checks now** |
+| **Overview** | see whether the last run worked, what changed, your rules at a glance with their trend, and what is waiting on you; or **Run checks now** |
+| **Findings** | see what each rule is for beside its findings, then accept exceptions, mark false positives or revoke, singly or in bulk |
+| **Rules** | pick a rule on the left; on the right see its statement, SQL and history, move it through its lifecycle with one button, or add a **New rule** |
 
 ## Run from the command line
 
@@ -33,11 +32,13 @@ Every `dq` command prints JSON only, never row data.
 
 ```bash
 uv run dq catalogue refresh          # refresh the column catalogue from Snowflake
+uv run dq catalogue sources          # which tables are registered, and what each is for
 uv run dq rule list --status READY_FOR_COMPILE
+uv run dq validate SITE-001 --file rules/sql/SITE-001.sql       # dry run: counts only, writes nothing
 uv run dq rule set-sql SITE-001 --file rules/sql/SITE-001.sql   # lint, validate, compile
 uv run dq rule confirm SITE-001 --as <owner email>
 uv run dq rule approve SITE-001 --as <approver email>
-uv run dq run --manual               # weekly run; add --no-narratives to skip Cortex
+uv run dq run --manual               # weekly run; add --narratives to also write Cortex narratives
 ```
 
 Run `uv run dq --help` for the full list.
