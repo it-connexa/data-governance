@@ -66,12 +66,15 @@ rule_options = sorted(rule_names)
 
 st.session_state.setdefault("findings_status", ["Open"])
 jump_rule = st.query_params.get("rule")
-if jump_rule:
+jump_show = st.query_params.get("show")
+if jump_rule or jump_show:
     st.query_params.clear()
-    if jump_rule in rule_options:
-        st.session_state["findings_rule"] = [jump_rule]
-        st.session_state["findings_status"] = ["Open"]
-        st.session_state["_findings_from"] = jump_rule
+if jump_rule in rule_options:
+    st.session_state["findings_rule"] = [jump_rule]
+    st.session_state["findings_status"] = ["Open"]
+    st.session_state["_findings_from"] = jump_rule
+if jump_show in ui.FINDING_PILLS:
+    st.session_state["findings_status"] = [jump_show]
 
 # --- Header: status pills (they double as the counts), search, filters -----------------
 

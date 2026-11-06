@@ -1,136 +1,112 @@
-"""Page 4 -- Run results (brief §10.6, page 5 "Run and results"): the latest
-run at a glance, object and rule headlines with week-on-week trends, site
-scores and the owner's narrative -- plus "Run checks now", so an owner can
-see the whole loop (rules, run, findings, summary) in one session.
+"""Overview (brief §10.6, "Run and results"): the landing page, for the week-to-week
+questions. Did the last run work? What changed? Which rules need attention, and
+what is waiting on me? Everything else (site scores, narratives, per-object
+cards) is left out on purpose; the data is still stored.
 """
 
 from __future__ import annotations
 
 import getpass
-import json
 from datetime import UTC, datetime, timedelta
 
 import streamlit as st
 
-from dq import narratives, run_ops
+from dq import finding_ops, run_ops
 from dq.app import context, ui
 
 settings, store, sources_config = context.load_context()
 owner = ui.page_header(store, "Overview", icon="dashboard")
-
 if owner is None:
     st.stop()
 
+is_approver = bool(owner.get("IS_APPROVER"))
+owner_email = owner["OWNER_EMAIL"]
 now = datetime.now(UTC)
 STALE_AFTER = timedelta(hours=48)
 
 flash = st.session_state.pop("_flash_run", None)
 if flash:
-    st.success(flash)
+    st.toast(flash, icon=":material/check_circle:")
 
 
-def _num(value) -> float:
-    return float(value) if value is not None else 0.0
+# --- Run checks now (dialog) -----------------------------------------------------------
 
 
-# --- Run checks now -------------------------------------------------------------------
-
-
-def _render_run_controls() -> None:
-    if not st.session_state.get("_confirming_run"):
-        if st.button("▶ Run checks now", type="primary"):
-            st.session_state["_confirming_run"] = True
-            st.rerun()
-        return
-
-    st.warning(
-        "This runs every active rule against Snowflake — usually a few minutes — and writes "
+@st.dialog("Run checks now")
+def _run_dialog() -> None:
+    st.write(
+        "This runs every active rule against Snowflake, usually in a few minutes, and writes "
         "a new run and updated findings to the governance store. **Stay on this page until "
         "it finishes.**"
     )
-    with_narratives = st.checkbox(
-        "Also write each owner's narrative (uses Snowflake Cortex)",
-        value=True,
-        key="run_with_narratives",
-    )
-    confirm_col, cancel_col = st.columns(2)
-    with confirm_col:
-        go = st.button("Yes, run now", type="primary")
+    go_col, cancel_col = st.columns(2)
+    with go_col:
+        go = st.button("Run now", type="primary", icon=":material/play_arrow:", width="stretch")
     with cancel_col:
-        if st.button("Cancel"):
-            st.session_state["_confirming_run"] = False
+        if st.button("Cancel", width="stretch"):
             st.rerun()
     if not go:
         return
 
     try:
-        with st.spinner("Running checks against Snowflake — this can take a few minutes…"):
+        with st.spinner("Running checks against Snowflake. This can take a few minutes…"):
             summary = run_ops.run_checks_now(
                 store,
                 context.make_executor(settings),
                 sources_config,
                 context.engine_config(store),
                 triggered_by=getpass.getuser(),
-                narrator=context.make_completer(settings) if with_narratives else None,
             )
     except run_ops.RunOpsError as exc:
-        st.session_state["_confirming_run"] = False
         st.error(str(exc))
         return
     except Exception as exc:  # noqa: BLE001 -- surface any connection/credential failure to the owner
-        st.session_state["_confirming_run"] = False
         st.error(f"The run couldn't complete: {exc}")
         return
 
-    st.session_state["_confirming_run"] = False
     st.session_state["_flash_run"] = (
-        f"Run finished: {summary.status.lower()} — {summary.rules_succeeded} of "
+        f"Run finished: {summary.status.lower()}. {summary.rules_succeeded} of "
         f"{summary.rules_attempted} rules succeeded"
         + (f", {summary.rules_errored} errored." if summary.rules_errored else ".")
     )
     st.rerun()
 
 
-# --- Latest run band ----------------------------------------------------------------------
+# --- Status line: did the last run work? -----------------------------------------------
 
 runs = store.list_runs(10)
 if not runs:
     st.info(
-        "No runs yet. Use **Run checks now** below, or run `dq run` in a terminal — "
-        "results, findings and narratives appear here afterwards."
+        "No runs yet. Use **Run checks now**, or run `dq run` in a terminal. Results and "
+        "findings appear here afterwards."
     )
-    _render_run_controls()
+    if st.button("Run checks now", type="primary", icon=":material/play_arrow:"):
+        _run_dialog()
     st.stop()
 
 latest_any = runs[0]
 latest_result = store.get_latest_run()
 
-band_cols = st.columns(4)
-with band_cols[0]:
-    st.markdown(
-        f"**Latest run**  \n{ui.run_status_badge(latest_any['STATUS'])}",
-        unsafe_allow_html=True,
-    )
-with band_cols[1]:
-    st.markdown(
-        f"**Started**  \n{ui.format_nz_datetime(latest_any['STARTED_AT'])}  \n"
-        f"{ui.format_age(latest_any['STARTED_AT'], now=now)}"
-    )
-with band_cols[2]:
-    st.markdown(
-        f"**Took**  \n{ui.format_duration(latest_any['STARTED_AT'], latest_any['FINISHED_AT'])}  \n"
-        f"{latest_any['RUN_TYPE'].title()} · {latest_any['TRIGGERED_BY']}"
-    )
-with band_cols[3]:
+status_col, scope_col, run_col = st.columns([7, 2, 2], vertical_alignment="center")
+with status_col:
     attempted = latest_any["RULES_ATTEMPTED"]
-    if attempted is None:
-        st.markdown("**Rules**  \n—")
-    else:
-        st.markdown(
-            f"**Rules**  \n{latest_any['RULES_SUCCEEDED']} of {attempted} succeeded"
-            + (f"  \n{latest_any['RULES_ERRORED']} errored" if latest_any["RULES_ERRORED"] else "")
-        )
+    rules_text = (
+        f" · {latest_any['RULES_SUCCEEDED']} of {attempted} rules succeeded"
+        if attempted is not None
+        else ""
+    )
+    st.markdown(
+        f"{ui.run_status_badge(latest_any['STATUS'])} **Latest run** "
+        f"{ui.format_nz_datetime(latest_any['STARTED_AT'])} · "
+        f"{ui.format_age(latest_any['STARTED_AT'], now=now)}{rules_text}"
+    )
+with scope_col:
+    show_all = bool(is_approver and st.toggle("All owners", key="overview_all_owners"))
+with run_col:
+    if st.button("Run checks now", type="primary", icon=":material/play_arrow:", width="stretch"):
+        _run_dialog()
 
+# Only what needs attention is shown as an alert.
 if latest_any["STATUS"] == "RUNNING":
     st.info("A run is in progress. Refresh this page when it finishes.")
 elif latest_any["STATUS"] == "FAILED":
@@ -141,218 +117,151 @@ elif latest_any["STATUS"] == "FAILED":
             f"{ui.format_nz_datetime(latest_result['STARTED_AT'])}."
         )
 
-if latest_result:
-    errored = store.get_run_rule_errors(latest_result["RUN_ID"])
-    if errored:
-        with st.expander(
-            f"⚠️ {len(errored)} rule(s) errored in the latest completed run — "
-            "their findings are unchanged",
-            expanded=True,
-        ):
-            for entry in errored:
-                st.markdown(f"**{entry['RULE_CODE']}** — {entry['ERROR_MESSAGE']}")
-
-    freshness = store.get_source_freshness_latest()
-    if freshness:
-        parts = []
-        for row in freshness:
-            synced = row["LAST_SYNCED_AT"]
-            stale = synced is None or now - synced > STALE_AFTER
-            parts.append(
-                f"{'⚠️ ' if stale else ''}**{row['SOURCE_NAME']}** synced "
-                f"{ui.format_age(synced, now=now)}"
-            )
-        st.caption("Source data: " + " · ".join(parts))
-
-_render_run_controls()
-
 if latest_result is None:
-    st.info("No completed run yet — results appear here once a run has finished.")
+    st.info("No completed run yet. Results appear here once a run has finished.")
     st.stop()
 
-st.caption(
-    f"Results below are from the run on {ui.format_nz_datetime(latest_result['STARTED_AT'])}."
-)
-st.divider()
-
-# --- Object headlines ---------------------------------------------------------------------
-
-st.subheader("Object headlines")
-object_rows = store.list_object_summaries_latest()
-object_trend: dict[str, list[dict]] = {}
-for row in store.get_object_trend(runs=12):
-    object_trend.setdefault(row["TARGET_OBJECT"], []).append(row)
-
-if not object_rows:
-    st.caption("No object results in this run.")
-else:
-    for col, row in zip(st.columns(len(object_rows)), object_rows, strict=True):
-        history = object_trend.get(row["TARGET_OBJECT"], [])
-        position = next((i for i, h in enumerate(history) if h["RUN_ID"] == row["RUN_ID"]), None)
-        previous = history[position - 1] if position else None
-        rate = _num(row["EXCEPTION_RATE"])
-        with col, st.container(border=True):
-            st.markdown(f"**{row['TARGET_OBJECT'].title()}**")
-            st.metric(
-                "Records with an exception",
-                f"{rate:.1f}%",
-                delta=f"{rate - _num(previous['EXCEPTION_RATE']):+.1f} pts" if previous else None,
-                delta_color="inverse",
-            )
-            st.caption(row["SUMMARY_TEXT"])
-
-# --- Rule results -------------------------------------------------------------------------
-
-st.subheader("Rule results")
-toggle_cols = st.columns(2)
-with toggle_cols[0]:
-    scope = (
-        st.segmented_control(
-            "Rules", ["My rules", "All rules"], default="My rules", key="results_scope"
-        )
-        or "My rules"
-    )
-with toggle_cols[1]:
-    level = (
-        st.segmented_control(
-            "Count by", ["Records", "Items"], default="Records", key="results_level"
-        )
-        or "Records"
+errored = store.get_run_rule_errors(latest_result["RUN_ID"])
+if errored:
+    lines = "\n".join(f"- **{e['RULE_CODE']}**: {e['ERROR_MESSAGE']}" for e in errored[:5])
+    more = f"\n- and {len(errored) - 5} more" if len(errored) > 5 else ""
+    noun = "rule errored" if len(errored) == 1 else "rules errored"
+    st.warning(
+        f"**{len(errored)} {noun}** in the latest completed run, so their findings are "
+        f"unchanged:\n{lines}{more}",
+        icon=":material/error:",
     )
 
-rule_rows = store.list_rule_summaries_latest(owner["OWNER_EMAIL"] if scope == "My rules" else None)
+stale = [
+    row
+    for row in store.get_source_freshness_latest()
+    if row["LAST_SYNCED_AT"] is None or now - row["LAST_SYNCED_AT"] > STALE_AFTER
+]
+if stale:
+    names = ", ".join(
+        f"**{row['SOURCE_NAME']}** ({ui.format_age(row['LAST_SYNCED_AT'], now=now)})"
+        for row in stale
+    )
+    st.warning(f"Source data may be out of date: {names}.", icon=":material/schedule:")
+
+# --- Data: the last run's results for the owner's rules --------------------------------
+
+rule_rows = store.list_rule_summaries_latest(None if show_all else owner_email)
 rule_trend: dict[str, list[dict]] = {}
 for row in store.get_rule_trend(runs=12):
     rule_trend.setdefault(row["RULE_CODE"], []).append(row)
+totals = ui.overview_totals(rule_rows, rule_trend)
 
-if not rule_rows:
-    st.info("No rule results to show for this selection.")
-else:
-    by_items = level == "Items"
-    evaluated_key = "ITEMS_EVALUATED" if by_items else "RECORDS_EVALUATED"
-    failed_key = "ITEMS_FAILED_OPEN" if by_items else "RECORDS_FAILED_OPEN"
-    rate_key = "ITEM_EXCEPTION_RATE" if by_items else "EXCEPTION_RATE"
+findings = store.list_findings(None if show_all else owner_email)
+change = finding_ops.summarise_run(findings, latest_result["RUN_ID"])
+lapsing = sum(1 for f in findings if finding_ops.is_lapsing(f))
 
-    table_rows = []
-    for row in rule_rows:
-        history = rule_trend.get(row["RULE_CODE"], [])
-        position = next((i for i, h in enumerate(history) if h["RUN_ID"] == row["RUN_ID"]), None)
-        previous = history[position - 1] if position else None
-        table_rows.append(
-            {
-                "Rule": row["RULE_CODE"],
-                "Name": row["RULE_NAME"],
-                "Severity": row["SEVERITY"],
-                "Evaluated": row[evaluated_key],
-                "Exceptions": row[failed_key],
-                "Rate": _num(row[rate_key]),
-                "Trend": [_num(h[rate_key]) for h in history],
-                "Since last run": ui.change_label(
-                    previous[failed_key] if previous else None, row[failed_key]
-                ),
-            }
-        )
+# --- The numbers ------------------------------------------------------------------------
 
-    event = st.dataframe(
-        table_rows,
-        width="stretch",
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key=f"results_rules_{scope}_{level}",
-        column_config={
-            "Evaluated": st.column_config.NumberColumn(format="%d"),
-            "Exceptions": st.column_config.NumberColumn(format="%d"),
-            "Rate": st.column_config.NumberColumn("Rate", format="%.1f%%"),
-            "Trend": st.column_config.LineChartColumn("Trend", y_min=0),
-        },
-    )
-    with st.expander("Headline sentences", expanded=True):
-        for row in rule_rows:
-            st.markdown(f"- {row['SUMMARY_TEXT']}")
+open_delta = (
+    totals["open"] - totals["previous_open"] if totals["previous_open"] is not None else None
+)
+metric_cols = st.columns(4)
+metric_cols[0].metric(
+    "Open findings",
+    f"{totals['open']:,}",
+    delta=f"{open_delta:+,} since the run before" if open_delta else None,
+    delta_color="inverse",
+    help="Findings still failing and not accepted, across your rules, as at the last run.",
+)
+metric_cols[1].metric("New this run", f"{change.new:,}", help="First raised in the last run.")
+metric_cols[2].metric(
+    "Resolved this run", f"{change.resolved:,}", help="Found fixed by the last run."
+)
+metric_cols[3].metric("Critical open", f"{totals['critical_open']:,}")
 
-    if event.selection["rows"]:
-        picked = table_rows[event.selection["rows"][0]]["Rule"]
-        if st.button(f"View open findings for {picked}", key=f"results_view_{picked}"):
-            st.switch_page(ui.PAGE_FINDINGS, query_params={"rule": picked})
+# --- Rules (left) and to do (right) -----------------------------------------------------
+
+rules_col, todo_col = st.columns([7, 3], gap="medium")
+
+with rules_col:
+    st.markdown("**Rules**")
+    if not rule_rows:
+        st.info("No rule results to show.")
     else:
-        st.caption("Tick a rule to jump to its open findings.")
-
-# --- Site scores --------------------------------------------------------------------------
-
-st.subheader("Site scores")
-site_scores = store.list_site_scores_latest()
-if not site_scores:
-    st.caption("No site scores in this run (no site-level rules succeeded).")
-else:
-    show = (
-        st.segmented_control(
-            "Show", ["Worst 25", "Worst 100", "All"], default="Worst 25", key="results_sites_show"
-        )
-        or "Worst 25"
-    )
-    limit = {"Worst 25": 25, "Worst 100": 100}.get(show)
-    shown = site_scores[:limit] if limit else site_scores
-    st.caption(f"Showing {len(shown):,} of {len(site_scores):,} sites — lowest score first.")
-    st.dataframe(
-        [
-            {
-                "Site": s["SITE_NAME"] or s["SITE_ID"],
-                "Score": _num(s["WEIGHTED_SCORE"]) if s["WEIGHTED_SCORE"] is not None else None,
-                "Open findings": s["OPEN_FINDINGS"],
-                "Critical open": s["CRITICAL_OPEN"],
-                "Rules failed": f"{s['RULES_FAILED']} of {s['RULES_APPLICABLE']}",
-            }
-            for s in shown
-        ],
-        width="stretch",
-        hide_index=True,
-        column_config={
-            "Score": st.column_config.ProgressColumn(
-                "Score", min_value=0, max_value=100, format="%.0f"
-            ),
-        },
-    )
-
-# --- Narrative ----------------------------------------------------------------------------
-
-st.subheader("Your narrative")
-narrative = store.get_latest_narrative(owner["OWNER_EMAIL"])
-if narrative is None:
-    st.caption("No narrative has been written for you yet.")
-elif narrative["STATUS"] == "ERRORED":
-    st.warning(f"The last narrative couldn't be written: {narrative['ERROR_MESSAGE']}")
-else:
-    with st.container(border=True):
-        st.write(narrative["NARRATIVE"])
-    caption = (
-        f"Written {ui.format_nz_datetime(narrative['GENERATED_AT'])} · {narrative['MODEL']} · "
-        f"prompt {narrative['PROMPT_VERSION']}"
-    )
-    if narrative["RUN_ID"] != latest_result["RUN_ID"]:
-        caption += " · **from an earlier run**"
-    st.caption(caption)
-    if narrative["INPUT_SUMMARY"]:
-        with st.expander("What was sent to Cortex"):
-            st.caption(
-                "Only these aggregated figures are sent — never finding details, record names "
-                "or any text from source records."
+        table_rows = []
+        for row in rule_rows:
+            history = rule_trend.get(row["RULE_CODE"], [])
+            position = next(
+                (i for i, h in enumerate(history) if h["RUN_ID"] == row["RUN_ID"]), None
             )
-            st.json(json.loads(narrative["INPUT_SUMMARY"]))
+            previous = history[position - 1] if position else None
+            open_now = row["ITEMS_FAILED_OPEN"] or 0
+            table_rows.append(
+                {
+                    "Rule": row["RULE_CODE"],
+                    "Name": row["RULE_NAME"],
+                    "Severity": ui.severity_cell(row["SEVERITY"]),
+                    "Open": open_now,
+                    "Since last run": ui.change_label(
+                        (previous["ITEMS_FAILED_OPEN"] or 0) if previous else None, open_now
+                    ),
+                    "Trend": [h["ITEMS_FAILED_OPEN"] or 0 for h in history],
+                }
+            )
 
-if st.button("Regenerate narrative" if narrative else "Generate narrative", key="gen_narrative"):
-    with st.spinner("Asking Cortex…"):
-        outcome = narratives.generate(
-            store,
-            context.make_completer(settings),
-            owner["OWNER_EMAIL"],
-            run_id=latest_result["RUN_ID"],
+        event = st.dataframe(
+            table_rows,
+            width="stretch",
+            height=min(430, 36 * (len(table_rows) + 1) + 4),
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=f"overview_rules_{show_all}",
+            column_config={
+                "Rule": st.column_config.TextColumn(width="small"),
+                "Severity": st.column_config.TextColumn(width="small"),
+                "Open": st.column_config.NumberColumn(format="%d", width="small"),
+                "Since last run": st.column_config.TextColumn(width="small"),
+                "Trend": st.column_config.LineChartColumn("Trend", y_min=0, width="small"),
+            },
         )
-    if outcome.status == "SUCCEEDED":
-        st.rerun()
-    st.error(f"Couldn't write the narrative: {outcome.error}")
+        picked_rows = event.selection["rows"]
+        if picked_rows:
+            picked = table_rows[picked_rows[0]]["Rule"]
+            if st.button(
+                f"View open findings for {picked}",
+                icon=":material/arrow_forward:",
+                key=f"overview_view_{picked}",
+            ):
+                st.switch_page(ui.PAGE_FINDINGS, query_params={"rule": picked})
+        else:
+            st.caption("Tick a rule to jump to its open findings. Counts are as at the last run.")
 
-# --- Run history --------------------------------------------------------------------------
+with todo_col:
+    st.markdown("**To do**")
+    todo_rules = [
+        r
+        for r in store.list_rules()
+        if r["OWNER_EMAIL"] == owner_email or (is_approver and r["STATUS"] == "OWNER_CONFIRMED")
+    ]
+    items = ui.todo_items(
+        todo_rules,
+        flagged_codes={code for code in store.list_rules_flagged_for_review()},
+        is_approver=is_approver,
+        lapsing=lapsing,
+    )
+    with st.container(border=True, key="overview_todo"):
+        if not items:
+            st.caption("Nothing needs you right now.")
+        for item in items[:6]:
+            st.page_link(
+                item["page"],
+                label=item["label"],
+                icon=":material/arrow_forward:",
+                query_params=item["params"],
+            )
+        if len(items) > 6:
+            st.page_link(
+                ui.PAGE_RULES, label=f"and {len(items) - 6} more on the Rules page", icon=None
+            )
+
+# --- Run history ----------------------------------------------------------------------------
 
 with st.expander("Run history"):
     st.dataframe(

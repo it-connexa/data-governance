@@ -43,6 +43,9 @@ def _after_action(message: str | None = None) -> None:
 jump_code = st.query_params.get("rule")
 if jump_code:
     st.query_params.clear()
+    jumped = store.get_rule(jump_code)
+    if jumped and is_approver and jumped["OWNER_EMAIL"] != owner_email:
+        st.session_state["rules_all_owners"] = True  # an approver opening another owner's rule
     st.session_state["selected_rule_code"] = jump_code
     st.session_state["edit_mode"] = False
     st.session_state["_reset_rule_filters"] = True

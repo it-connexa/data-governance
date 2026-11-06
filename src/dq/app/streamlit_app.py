@@ -39,7 +39,6 @@ pages = [
         ui.PAGE_OVERVIEW,
         title="Overview",
         icon=":material/dashboard:",
-        url_path="overview",
         default=True,
     ),
     st.Page(

@@ -264,6 +264,88 @@ def rule_pill_counts(rules: list[dict], *, flagged_codes: set[str]) -> dict[str,
     }
 
 
+# --- Overview totals ----------------------------------------------------------------------
+
+
+def overview_totals(rule_rows: list[dict], trend_by_rule: dict[str, list[dict]]) -> dict:
+    """Open findings (items) across the rules in the last run, how many are critical,
+    and the open total at the run before, so the page can say what changed. The
+    previous total is None when no rule has an earlier run to compare with."""
+    open_total = critical = previous_total = 0
+    has_previous = False
+    for row in rule_rows:
+        open_ = row["ITEMS_FAILED_OPEN"] or 0
+        open_total += open_
+        if row["SEVERITY"] == "CRITICAL":
+            critical += open_
+        history = trend_by_rule.get(row["RULE_CODE"], [])
+        position = next((i for i, h in enumerate(history) if h["RUN_ID"] == row["RUN_ID"]), None)
+        if position:
+            has_previous = True
+            previous_total += history[position - 1]["ITEMS_FAILED_OPEN"] or 0
+    return {
+        "open": open_total,
+        "previous_open": previous_total if has_previous else None,
+        "critical_open": critical,
+    }
+
+
+# --- The Overview to-do list -------------------------------------------------------------
+
+# status: (verb, order). Rules in READY_FOR_COMPILE wait on a data steward, not on the owner.
+_TODO_VERBS = {
+    "NEEDS_CLARIFICATION": ("Answer a question on", 0),
+    "DRAFT": ("Submit", 1),
+    "COMPILED": ("Confirm", 2),
+}
+
+
+def todo_items(
+    rules: list[dict], *, flagged_codes: set[str], is_approver: bool, lapsing: int
+) -> list[dict]:
+    """What is waiting on the owner this week: rules to answer, submit, confirm
+    or (for approvers) approve, rules flagged for review, and lapsing exceptions.
+    Each item says where to go."""
+    waiting: list[tuple[int, dict]] = []
+    listed: set[str] = set()
+    for rule in rules:
+        verb, order = _TODO_VERBS.get(rule["STATUS"], (None, 0))
+        if verb is None and is_approver and rule["STATUS"] == "OWNER_CONFIRMED":
+            verb, order = "Approve", 3
+        if verb is None:
+            continue
+        listed.add(rule["RULE_CODE"])
+        waiting.append((order, _todo(rule, verb)))
+    items = [item for _, item in sorted(waiting, key=lambda pair: pair[0])]
+    items += [
+        _todo(rule, "Review")
+        for rule in rules
+        if rule["RULE_CODE"] in flagged_codes and rule["RULE_CODE"] not in listed
+    ]
+    if lapsing:
+        noun = "exception lapses" if lapsing == 1 else "exceptions lapse"
+        items.append(
+            {
+                "rule": None,
+                "verb": "Review",
+                "label": f"{lapsing} accepted {noun} soon",
+                "page": PAGE_FINDINGS,
+                "params": {"show": "Lapsing"},
+            }
+        )
+    return items
+
+
+def _todo(rule: dict, verb: str) -> dict:
+    return {
+        "rule": rule["RULE_CODE"],
+        "verb": verb,
+        "label": f"{verb} {rule['RULE_CODE']} · {rule['RULE_NAME']}",
+        "page": PAGE_RULES,
+        "params": {"rule": rule["RULE_CODE"]},
+    }
+
+
 # --- Findings: status pills and the rules a view covers ----------------------------------
 
 FINDING_PILLS = ["Open", "Accepted", "False positive", "Resolved", "Lapsing"]
@@ -344,6 +426,10 @@ _LAYOUT_CSS = """
 [data-testid="stMainBlockContainer"]:has(.st-key-findings_chips)
   [data-testid="stLayoutWrapper"]:has(> .st-key-findings_list) {
   height: calc(100vh - 17.9rem) !important; }
+/* To-do links wrap instead of cutting long rule names off. */
+.st-key-overview_todo [data-testid="stPageLink-NavLink"] { height: auto; align-items: flex-start; }
+.st-key-overview_todo [data-testid="stPageLink-NavLink"] p { white-space: normal !important;
+  overflow: visible !important; text-overflow: clip !important; }
 /* Children must not shrink to fit: when content is taller than the pane it scrolls instead. */
 .st-key-rules_detail > *, .st-key-rules_list > *,
 .st-key-findings_detail > *, .st-key-findings_list > * { flex-shrink: 0; }

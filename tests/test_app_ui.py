@@ -393,3 +393,86 @@ def test_rules_in_view_copes_with_a_missing_statement():
         [{"RULE_CODE": "A", "RULE_NAME": "Alpha", "SEVERITY": "LOW", "OWNER_EMAIL": "o@x"}]
     )
     assert rules[0]["statement"] == ""
+
+
+# --- the Overview to-do list ------------------------------------------------------------
+
+
+def _rule(code, status, name=None):
+    return {"RULE_CODE": code, "RULE_NAME": name or f"{code} name", "STATUS": status}
+
+
+def test_todo_items_list_what_each_rule_state_waits_on():
+    rules = [
+        _rule("A", "DRAFT"),
+        _rule("B", "NEEDS_CLARIFICATION"),
+        _rule("C", "READY_FOR_COMPILE"),  # waiting on a data steward, not on you
+        _rule("D", "COMPILED"),
+        _rule("E", "OWNER_CONFIRMED"),
+        _rule("F", "ACTIVE"),
+    ]
+
+    items = ui.todo_items(rules, flagged_codes=set(), is_approver=False, lapsing=0)
+
+    assert [(i["rule"], i["verb"]) for i in items] == [
+        ("B", "Answer a question on"),
+        ("A", "Submit"),
+        ("D", "Confirm"),
+    ]
+    assert all(i["page"] == ui.PAGE_RULES for i in items)
+
+
+def test_todo_items_add_approvals_for_approvers_and_review_flags():
+    rules = [_rule("E", "OWNER_CONFIRMED"), _rule("F", "ACTIVE")]
+
+    items = ui.todo_items(rules, flagged_codes={"F"}, is_approver=True, lapsing=0)
+
+    assert [(i["rule"], i["verb"]) for i in items] == [("E", "Approve"), ("F", "Review")]
+
+
+def test_todo_items_end_with_lapsing_exceptions_that_link_to_findings():
+    items = ui.todo_items([], flagged_codes=set(), is_approver=False, lapsing=3)
+
+    assert len(items) == 1
+    assert items[0]["page"] == ui.PAGE_FINDINGS
+    assert items[0]["params"] == {"show": "Lapsing"}
+    assert "3 accepted exceptions" in items[0]["label"]
+
+
+def test_todo_items_singular_lapsing_and_empty_list():
+    assert (
+        "1 accepted exception "
+        in ui.todo_items([], flagged_codes=set(), is_approver=False, lapsing=1)[0]["label"]
+    )
+    assert ui.todo_items([], flagged_codes=set(), is_approver=False, lapsing=0) == []
+
+
+# --- Overview totals from the last run ----------------------------------------------------
+
+
+def _summary(code, severity, open_, run="r2"):
+    return {"RULE_CODE": code, "SEVERITY": severity, "ITEMS_FAILED_OPEN": open_, "RUN_ID": run}
+
+
+def test_overview_totals_sum_open_and_critical_and_compare_with_the_previous_run():
+    rows = [_summary("A", "CRITICAL", 5), _summary("B", "LOW", 7)]
+    trend = {
+        "A": [{"RUN_ID": "r1", "ITEMS_FAILED_OPEN": 8}, {"RUN_ID": "r2", "ITEMS_FAILED_OPEN": 5}],
+        "B": [{"RUN_ID": "r1", "ITEMS_FAILED_OPEN": 4}, {"RUN_ID": "r2", "ITEMS_FAILED_OPEN": 7}],
+    }
+
+    totals = ui.overview_totals(rows, trend)
+
+    assert totals == {"open": 12, "previous_open": 12, "critical_open": 5}
+
+
+def test_overview_totals_have_no_previous_for_a_first_run_and_treat_null_as_zero():
+    rows = [_summary("A", "HIGH", None)]
+    trend = {"A": [{"RUN_ID": "r2", "ITEMS_FAILED_OPEN": None}]}
+
+    assert ui.overview_totals(rows, trend) == {
+        "open": 0,
+        "previous_open": None,
+        "critical_open": 0,
+    }
+    assert ui.overview_totals([], {}) == {"open": 0, "previous_open": None, "critical_open": 0}
