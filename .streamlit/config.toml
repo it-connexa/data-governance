@@ -1,0 +1,8 @@
+# Quiet the Streamlit chrome for the owner-facing app. Colours are set where they
+# carry meaning (status badges), so the theme only needs a primary colour.
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#1d4ed8"

@@ -1,9 +1,14 @@
-"""Shared Streamlit widgets (brief §10.6). Uses `st.*`, so this is verified
-by running the app itself against a temp store, never by pytest.
+"""Shared Streamlit helpers (brief §10.6).
+
+The pure helpers (labels, badges, lifecycle view, actions, filters, formatting)
+are unit-tested. The few functions that call `st.*` directly -- the layout CSS,
+page header, owner selector and lifecycle strip -- are verified by running the
+app against a temp store and by the AppTest smoke tests, never against real data.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -28,7 +33,104 @@ STATUSES = [
     "RETIRED",
 ]
 
-# --- Lifecycle stepper (brief §10.2 state machine, made visible to owners) --------
+# Page files, relative to the entrypoint, for st.navigation / st.switch_page.
+PAGE_OVERVIEW = "views/overview.py"
+PAGE_FINDINGS = "views/findings.py"
+PAGE_RULES = "views/rules.py"
+
+# Height of the scrolling list and detail panes. Streamlit sizes containers in
+# pixels, so this is tuned for a laptop screen (about 1440 x 900).
+PANE_HEIGHT = 600
+
+# --- Labels ------------------------------------------------------------------------
+
+
+def enum_label(value: str | None) -> str:
+    """A database enum in plain words: CROSS_DOMAIN -> "Cross domain"."""
+    if not value:
+        return "—"
+    return value.replace("_", " ").capitalize()
+
+
+# status: (label, Streamlit badge colour, table glyph, strip colour -- darker, white text on it)
+_STATUS_STYLE = {
+    "DRAFT": ("Draft", "gray", "🔘", "#4b5563"),
+    "NEEDS_CLARIFICATION": ("Needs clarification", "orange", "🟠", "#b45309"),
+    "READY_FOR_COMPILE": ("Ready for compile", "violet", "🟣", "#6d28d9"),
+    "COMPILED": ("Compiled", "blue", "🔵", "#1d4ed8"),
+    "OWNER_CONFIRMED": ("Owner confirmed", "yellow", "🟡", "#a16207"),
+    "ACTIVE": ("Active", "green", "🟢", "#15803d"),
+    "RETIRED": ("Retired", "red", "🔴", "#b91c1c"),
+}
+
+
+def status_label(status: str) -> str:
+    return _STATUS_STYLE.get(status, (status,))[0]
+
+
+def status_color(status: str) -> str:
+    return _STATUS_STYLE[status][1] if status in _STATUS_STYLE else "gray"
+
+
+def status_badge(status: str) -> str:
+    """A native Streamlit colour badge for a rule's status, for st.markdown
+    or st.caption (it can't render inside a dataframe cell; see status_cell)."""
+    return f":{status_color(status)}-badge[{status_label(status)}]"
+
+
+def status_cell(status: str) -> str:
+    """Glyph plus words for a table cell, so status never relies on colour alone."""
+    glyph = _STATUS_STYLE[status][2] if status in _STATUS_STYLE else "🔘"
+    return f"{glyph} {status_label(status)}"
+
+
+_SEVERITY_GLYPHS = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}
+
+
+def severity_cell(severity: str | None) -> str:
+    if not severity:
+        return "—"
+    return f"{_SEVERITY_GLYPHS.get(severity, '🔘')} {severity.capitalize()}"
+
+
+_RUN_STATUS_STYLE = {
+    "SUCCEEDED": ("Succeeded", "green"),
+    "PARTIAL": ("Partial", "orange"),
+    "FAILED": ("Failed", "red"),
+    "RUNNING": ("Running", "blue"),
+}
+
+
+def run_status_badge(status: str) -> str:
+    """A native colour badge for a run's status, like status_badge for rules."""
+    label, color = _RUN_STATUS_STYLE.get(status, (status, "gray"))
+    return f":{color}-badge[{label}]"
+
+
+_HISTORY_EVENTS = {
+    "CREATED": "Created",
+    "STATEMENT_EDITED": "Statement edited",
+    "CLARIFICATION": "Clarification",
+    "SUBMITTED": "Submitted for compilation",
+    "SQL_COMPILED": "SQL compiled",
+    "VALIDATED": "Validated",
+    "PREVIEWED": "Previewed",
+    "OWNER_CONFIRMED": "Confirmed by owner",
+    "OWNER_REJECTED": "Rejected by owner",
+    "APPROVED": "Approved",
+    "APPROVAL_REJECTED": "Approval rejected",
+    "RETIRED": "Retired",
+    "REVIEW_FLAGGED": "Flagged for review",
+    "REVIEW_CLEARED": "Review flag cleared",
+}
+
+
+def history_event_label(change_type: str) -> str:
+    """A rule history change type in plain words."""
+    return _HISTORY_EVENTS.get(change_type) or enum_label(change_type)
+
+
+# --- Lifecycle: one strip, one primary action, the rest in a menu ------------------
 
 _STEPS = [
     ("DRAFT", "Draft"),
@@ -38,163 +140,278 @@ _STEPS = [
     ("ACTIVE", "Active"),
 ]
 
-_STATUS_COLORS = {
-    "DRAFT": "#9aa0a6",
-    "NEEDS_CLARIFICATION": "#d97706",
-    "READY_FOR_COMPILE": "#8b5cf6",
-    "COMPILED": "#3b82f6",
-    "OWNER_CONFIRMED": "#0d9488",
-    "ACTIVE": "#16a34a",
-    "RETIRED": "#dc2626",
-}
 
-_STATUS_LABELS = {
-    "DRAFT": "Draft",
-    "NEEDS_CLARIFICATION": "Needs clarification",
-    "READY_FOR_COMPILE": "Ready for compile",
-    "COMPILED": "Compiled",
-    "OWNER_CONFIRMED": "Owner confirmed",
-    "ACTIVE": "Active",
-    "RETIRED": "Retired",
-}
-
-_DONE_COLOR = "#16a34a"
-_FUTURE_COLOR = "#9aa0a6"
+@dataclass(frozen=True)
+class LifecycleStep:
+    key: str
+    label: str
+    state: str  # "done" | "current" | "todo"
 
 
-def status_badge(status: str) -> str:
-    """A small HTML pill for a rule's status -- for embedding in a caption
-    or a markdown table cell (never in a plain st.dataframe cell, which
-    can't render HTML)."""
-    color = _STATUS_COLORS.get(status, _FUTURE_COLOR)
-    label = _STATUS_LABELS.get(status, status)
-    return (
-        f'<span style="background:{color}22;color:{color};border:1px solid {color}66;'
-        f"border-radius:999px;padding:1px 10px;font-size:0.78rem;font-weight:600;"
-        f'white-space:nowrap;">{label}</span>'
-    )
+@dataclass(frozen=True)
+class LifecycleView:
+    steps: list[LifecycleStep]
+    paused: bool  # NEEDS_CLARIFICATION: a pause on Draft, waiting for the owner
+    retired: bool  # terminal: not a position on the line
 
 
-def render_lifecycle_stepper(status: str) -> None:
-    """A horizontal progress indicator across the main lifecycle line,
-    with NEEDS_CLARIFICATION shown as a pause on DRAFT and RETIRED shown
-    as a terminal banner instead of a position on the line."""
+def lifecycle_view(status: str) -> LifecycleView:
+    """The lifecycle line for a status: earlier steps done, the current one
+    marked, later ones to do. NEEDS_CLARIFICATION is a pause on Draft and
+    RETIRED is terminal, so it has no current step."""
     if status == "RETIRED":
-        color = _STATUS_COLORS["RETIRED"]
+        steps = [LifecycleStep(key, label, "todo") for key, label in _STEPS]
+        return LifecycleView(steps=steps, paused=False, retired=True)
+
+    active = "DRAFT" if status == "NEEDS_CLARIFICATION" else status
+    keys = [key for key, _ in _STEPS]
+    current = keys.index(active) if active in keys else 0
+    steps = [
+        LifecycleStep(key, label, "done" if i < current else "current" if i == current else "todo")
+        for i, (key, label) in enumerate(_STEPS)
+    ]
+    return LifecycleView(steps=steps, paused=status == "NEEDS_CLARIFICATION", retired=False)
+
+
+@dataclass(frozen=True)
+class RuleAction:
+    key: str
+    label: str
+    icon: str
+
+
+def primary_action(status: str, *, is_approver: bool) -> RuleAction | None:
+    """The one button a rule's current state asks for, if any."""
+    if status == "DRAFT":
+        return RuleAction("submit", "Submit for compilation", ":material/send:")
+    if status == "NEEDS_CLARIFICATION":
+        return RuleAction("answer", "Save answer", ":material/reply:")
+    if status == "COMPILED":
+        return RuleAction("confirm", "Confirm: this is what I meant", ":material/check_circle:")
+    if status == "OWNER_CONFIRMED" and is_approver:
+        return RuleAction("approve", "Approve", ":material/verified:")
+    return None
+
+
+def secondary_actions(status: str, *, is_approver: bool) -> list[str]:
+    """Keys of the actions that live in the "more" menu for this state."""
+    actions = ["edit"]
+    if status == "DRAFT":
+        actions.append("delete")
+    if status == "COMPILED":
+        actions.append("reject")
+    if is_approver and status in ("COMPILED", "OWNER_CONFIRMED", "ACTIVE"):
+        actions.append("retire")
+    return actions
+
+
+def next_step_guidance(status: str, *, is_approver: bool = False) -> tuple[str, str]:
+    """(Material icon, one sentence) saying what a status means and what is
+    next, so an owner never has to guess."""
+    if status == "DRAFT":
+        return (
+            ":material/edit_note:",
+            "Still a draft. Refine the statement, then submit it for compilation.",
+        )
+    if status == "NEEDS_CLARIFICATION":
+        return (
+            ":material/help:",
+            "The compiler needs one more detail. Answer the question on the Definition tab.",
+        )
+    if status == "READY_FOR_COMPILE":
+        return (
+            ":material/hourglass_top:",
+            "Submitted, waiting for a data steward to write the check.",
+        )
+    if status == "COMPILED":
+        return (
+            ":material/search:",
+            "SQL written and validated. Check it on the SQL & preview tab, then confirm.",
+        )
+    if status == "OWNER_CONFIRMED":
+        if is_approver:
+            return (":material/verified:", "Confirmed. Approve it to make it live.")
+        return (":material/schedule:", "Confirmed, waiting for an approver to make it live.")
+    if status == "ACTIVE":
+        return (":material/play_circle:", "Live. Runs every week and raises findings.")
+    if status == "RETIRED":
+        return (":material/block:", "Retired. Excluded from future runs.")
+    return ("", "")
+
+
+# --- Rule filter pills (statuses grouped, plus the review flag) ---------------------
+
+RULE_PILLS = ["Draft", "In progress", "Active", "Retired", "Flagged"]
+_PILL_STATUSES = {
+    "Draft": {"DRAFT", "NEEDS_CLARIFICATION"},
+    "In progress": {"READY_FOR_COMPILE", "COMPILED", "OWNER_CONFIRMED"},
+    "Active": {"ACTIVE"},
+    "Retired": {"RETIRED"},
+}
+
+
+def rule_in_pill(rule: dict, pill: str, *, flagged_codes: set[str]) -> bool:
+    if pill == "Flagged":
+        return rule["RULE_CODE"] in flagged_codes
+    return rule["STATUS"] in _PILL_STATUSES[pill]
+
+
+def rule_pill_counts(rules: list[dict], *, flagged_codes: set[str]) -> dict[str, int]:
+    return {
+        pill: sum(1 for r in rules if rule_in_pill(r, pill, flagged_codes=flagged_codes))
+        for pill in RULE_PILLS
+    }
+
+
+# --- Page chrome (st.*) ---------------------------------------------------------------
+
+# One place for the CSS that tightens Streamlit's default spacing and styles the
+# lifecycle strip. Selectors that touch Streamlit's own markup (data-testid) are
+# here only, so a Streamlit upgrade means one fix.
+_LAYOUT_CSS = """
+<style>
+[data-testid="stMainBlockContainer"] { padding: 4.4rem 1.6rem 1.5rem; max-width: none; }
+[data-testid="stVerticalBlock"] { gap: 0.65rem; }
+[data-testid="stMainBlockContainer"] h4 { padding: 0.1rem 0; margin: 0; }
+[data-testid="stMetricValue"] { font-size: 1.6rem; }
+[data-testid="stElementContainer"]:has(.dq-css) { display: none; }
+/* Scrolling panes are sized from the viewport, so a short laptop screen doesn't scroll the page.
+   Streamlit puts a container's fixed height on its layout wrapper (as height and flex-basis), so
+   that is what we override. */
+[data-testid="stLayoutWrapper"]:has(> .st-key-rules_detail),
+[data-testid="stLayoutWrapper"]:has(> .st-key-findings_detail) {
+  height: calc(100vh - 12.9rem) !important; flex-basis: auto !important; min-height: 320px; }
+[data-testid="stLayoutWrapper"]:has(> .st-key-rules_list),
+[data-testid="stLayoutWrapper"]:has(> .st-key-findings_list) {
+  height: calc(100vh - 14.9rem) !important; flex-basis: auto !important; min-height: 280px; }
+.st-key-rules_list button { justify-content: flex-start; height: auto; padding: 0.4rem 0.7rem;
+  border: 1px solid transparent; }
+.st-key-rules_list button > div, .st-key-rules_list button > div > span { width: 100%;
+  justify-content: flex-start; }
+.st-key-rules_list button [data-testid="stMarkdownContainer"] { width: 100%; text-align: left; }
+.st-key-rules_list button p { text-align: left; line-height: 1.35; }
+.st-key-rules_list button[data-testid="stBaseButton-primary"] { background: #dbeafe;
+  border-color: #93c5fd; }
+.st-key-rules_list button[data-testid="stBaseButton-primary"] p { color: #1e3a8a; }
+.dq-steps { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem; }
+.dq-step { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82rem;
+  padding: 0.12rem 0.55rem; border-radius: 999px; border: 1px solid #9ca3af; color: #374151;
+  background: #fff; white-space: nowrap; }
+.dq-step.done { color: #166534; border-color: #86efac; background: #f0fdf4; }
+.dq-step.current { color: #fff; font-weight: 600; }
+.dq-sep { width: 0.6rem; height: 2px; background: #d1d5db; }
+.dq-retired { padding: 0.3rem 0.8rem; border-radius: 6px; background: #fef2f2;
+  border: 1px solid #fca5a5; color: #991b1b; font-weight: 600; font-size: 0.85rem; }
+</style>
+<span class="dq-css"></span>
+"""
+
+
+def apply_layout_css() -> None:
+    st.markdown(_LAYOUT_CSS, unsafe_allow_html=True)
+
+
+def render_lifecycle_strip(status: str) -> None:
+    """The lifecycle as one slim line of steps: done, current, to do. Uses
+    dark text and borders, not opacity, so every step stays readable."""
+    view = lifecycle_view(status)
+    if view.retired:
         st.markdown(
-            f'<div style="padding:10px 14px;border-radius:8px;background:{color}18;'
-            f'border:1px solid {color}55;color:{color};font-weight:600;">'
-            f"⏹️ Retired — excluded from future runs</div>",
+            '<div class="dq-retired">Retired: excluded from future runs</div>',
             unsafe_allow_html=True,
         )
         return
 
-    active_status = "DRAFT" if status == "NEEDS_CLARIFICATION" else status
-    step_keys = [key for key, _ in _STEPS]
-    current_index = step_keys.index(active_status) if active_status in step_keys else 0
-
-    cells = []
-    for i, (_key, label) in enumerate(_STEPS):
-        if i < current_index:
-            color, weight, opacity, icon = _DONE_COLOR, "600", "0.55", "✓"
-        elif i == current_index:
-            color = _STATUS_COLORS.get(status, _STATUS_COLORS["DRAFT"])
-            weight, opacity, icon = "700", "1", str(i + 1)
-        else:
-            color, weight, opacity, icon = _FUTURE_COLOR, "500", "0.45", str(i + 1)
-        cells.append(
-            f'<div style="flex:1;text-align:center;opacity:{opacity};">'
-            f'<div style="width:26px;height:26px;border-radius:50%;background:{color};'
-            f"color:white;display:inline-flex;align-items:center;justify-content:center;"
-            f'font-size:0.75rem;font-weight:{weight};margin:0 auto;">{icon}</div>'
-            f'<div style="font-size:0.75rem;margin-top:4px;font-weight:{weight};color:{color};">'
-            f"{label}</div></div>"
-        )
-    connector = '<div style="flex:1;height:2px;background:#9aa0a655;margin-top:13px;"></div>'
-    row_html = connector.join(cells)
-
-    html = f'<div style="display:flex;align-items:flex-start;">{row_html}</div>'
-    if status == "NEEDS_CLARIFICATION":
-        color = _STATUS_COLORS["NEEDS_CLARIFICATION"]
-        html += (
-            f'<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:{color}18;'
-            f'border:1px solid {color}66;color:{color};font-size:0.85rem;">'
-            "⏸️ Paused — waiting on the owner to answer a clarification question below."
-            "</div>"
-        )
-    st.markdown(html, unsafe_allow_html=True)
-
-
-def next_step_guidance(status: str, *, is_approver: bool = False) -> tuple[str, str]:
-    """(icon, message) describing what happens next for a rule's status,
-    so an owner never has to guess what a status word means."""
-    if status == "DRAFT":
-        return (
-            "\U0001f4dd",
-            "Still being drafted. Refine the wording below, then **Submit for "
-            "compilation** when it says exactly what you mean.",
-        )
-    if status == "NEEDS_CLARIFICATION":
-        return (
-            "❓",
-            "The compiler needs one more detail before it can write the check. "
-            "Answer the question below.",
-        )
-    if status == "READY_FOR_COMPILE":
-        return (
-            "⏳",
-            "Submitted. This is queued for a data steward to turn into a check "
-            "— nothing more to do here yet.",
-        )
-    if status == "COMPILED":
-        return (
-            "\U0001f50d",
-            "SQL is written and passed validation. Review it below, then **Run "
-            "preview** to see real matching records before you sign off.",
-        )
-    if status == "OWNER_CONFIRMED":
-        if is_approver:
-            return (
-                "✅",
-                "You've confirmed this is what you meant. As an approver, you can "
-                "**Approve** it below to make it live.",
+    current_color = _STATUS_STYLE.get(status, _STATUS_STYLE["DRAFT"])[3]
+    parts: list[str] = []
+    for i, step in enumerate(view.steps):
+        if i:
+            parts.append('<span class="dq-sep"></span>')
+        if step.state == "done":
+            parts.append(f'<span class="dq-step done">✓ {step.label}</span>')
+        elif step.state == "current":
+            label = f"{step.label} · paused" if view.paused else step.label
+            parts.append(
+                f'<span class="dq-step current" style="background:{current_color};'
+                f'border-color:{current_color};">{label}</span>'
             )
-        return ("✅", "Confirmed — waiting on an approver to review the SQL and make it live.")
-    if status == "ACTIVE":
-        return ("\U0001f7e2", "Live. This rule runs on every `dq run` and feeds real findings.")
-    if status == "RETIRED":
-        return ("⏹️", "Retired — excluded from future runs.")
-    return ("", "")
+        else:
+            parts.append(f'<span class="dq-step">{step.label}</span>')
+    st.markdown(f'<div class="dq-steps">{"".join(parts)}</div>', unsafe_allow_html=True)
 
 
-def render_sidebar(store: GovernanceStore) -> dict | None:
-    """The "acting as" owner selector + facilitated-session banner
-    (brief §10.6: sidebar selector from DQ_OWNER, visible banner).
+_OWNER_WIDGET_KEY = "acting_as_widget"
+_OWNER_REMEMBER_KEY = "acting_as_email"
 
-    Explicitly re-derives the selectbox's `index` from the previously
-    chosen owner's email each run, rather than relying only on Streamlit's
-    own key-based state -- navigating between pages otherwise silently
-    resets the selection back to the first owner alphabetically, which is
-    confusing in a facilitated session (you'd be "acting as" the wrong
-    person on the next page without any obvious sign of it)."""
+
+def current_owner(store: GovernanceStore) -> dict | None:
+    """The owner being acted as. Streamlit drops a widget's own state when you
+    change page, so the choice is also kept under a plain session key; the
+    selector's state wins when it exists (it is set before a rerun, so this is
+    right even before the selector is drawn in a run). Falls back to the first owner."""
     owners = store.list_owners()
     if not owners:
-        st.sidebar.warning("No active owners configured in DQ_OWNER.")
         return None
+    emails = {o["OWNER_EMAIL"] for o in owners}
+    chosen = st.session_state.get(_OWNER_WIDGET_KEY)
+    if chosen in emails:
+        st.session_state[_OWNER_REMEMBER_KEY] = chosen
+    else:
+        chosen = st.session_state.get(_OWNER_REMEMBER_KEY)
+    for owner in owners:
+        if owner["OWNER_EMAIL"] == chosen:
+            return owner
+    return owners[0]
 
-    labels = [f"{o['DISPLAY_NAME']} ({o['OWNER_EMAIL']})" for o in owners]
-    previous = st.session_state.get("acting_as")
-    default_index = 0
-    if previous is not None:
-        for i, o in enumerate(owners):
-            if o["OWNER_EMAIL"] == previous["OWNER_EMAIL"]:
-                default_index = i
-                break
-    choice = st.sidebar.selectbox("Acting as", labels, index=default_index, key="acting_as_label")
-    chosen = owners[labels.index(choice)]
-    st.session_state["acting_as"] = chosen
-    st.sidebar.info(f"Facilitated session — acting as **{chosen['DISPLAY_NAME']}**")
-    return chosen
+
+def owner_selector(store: GovernanceStore) -> dict | None:
+    """The "Acting as" selector (brief §10.6: a visible facilitated-session
+    banner), drawn compactly in the page header. With one owner it is a label."""
+    owners = store.list_owners()
+    if not owners:
+        st.warning("No active owners configured in DQ_OWNER.")
+        return None
+    owner = current_owner(store)
+    if len(owners) == 1:
+        st.caption(f"Facilitated session · acting as **{owner['DISPLAY_NAME']}**")
+        return owner
+    names = {o["OWNER_EMAIL"]: o["DISPLAY_NAME"] for o in owners}
+    emails = list(names)
+    st.selectbox(
+        "Acting as",
+        emails,
+        index=emails.index(owner["OWNER_EMAIL"]),
+        format_func=lambda email: f"Acting as: {names[email]}",
+        key=_OWNER_WIDGET_KEY,
+        label_visibility="collapsed",
+        help="Facilitated session: every action is recorded against this owner.",
+    )
+    return current_owner(store)
+
+
+def key_values(pairs: list[tuple[str, str]], *, columns: int = 4) -> None:
+    """A compact grid of small labels over bold values, instead of a block of
+    disabled input widgets."""
+    cells = st.columns(columns)
+    for i, (label, value) in enumerate(pairs):
+        cells[i % columns].markdown(
+            f'<span style="font-size:0.78rem;color:#4b5563;">{label}</span><br>**{value or "—"}**',
+            unsafe_allow_html=True,
+        )
+
+
+def page_header(
+    store: GovernanceStore, title: str, *, icon: str, subtitle: str | None = None
+) -> dict | None:
+    """One compact header row: the page title (matching its navigation label
+    and icon), a one-line context, and the owner selector on the right."""
+    left, right = st.columns([5, 2], vertical_alignment="center")
+    with left:
+        st.markdown(f"#### :material/{icon}: {title}")
+        if subtitle:
+            st.caption(subtitle)
+    with right:
+        return owner_selector(store)
 
 
 def select_index(options: list[str], value: str | None, default: int = 0) -> int:
@@ -254,30 +471,6 @@ def finding_status_label(finding: dict, *, now: datetime | None = None) -> str:
 
 
 # --- Run results helpers (pure) ----------------------------------------------------------
-
-_RUN_STATUS_COLORS = {
-    "SUCCEEDED": "#16a34a",
-    "PARTIAL": "#d97706",
-    "FAILED": "#dc2626",
-    "RUNNING": "#3b82f6",
-}
-_RUN_STATUS_LABELS = {
-    "SUCCEEDED": "Succeeded",
-    "PARTIAL": "Partial",
-    "FAILED": "Failed",
-    "RUNNING": "Running",
-}
-
-
-def run_status_badge(status: str) -> str:
-    """A small HTML pill for a run's status, like status_badge for rules."""
-    color = _RUN_STATUS_COLORS.get(status, _FUTURE_COLOR)
-    label = _RUN_STATUS_LABELS.get(status, status)
-    return (
-        f'<span style="background:{color}22;color:{color};border:1px solid {color}66;'
-        f"border-radius:999px;padding:1px 10px;font-size:0.78rem;font-weight:600;"
-        f'white-space:nowrap;">{label}</span>'
-    )
 
 
 def _plural(n: int, unit: str) -> str:

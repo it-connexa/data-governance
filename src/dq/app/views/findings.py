@@ -16,11 +16,8 @@ import streamlit as st
 from dq import finding_ops
 from dq.app import context, ui
 
-st.set_page_config(page_title="Findings", layout="wide")
-
 settings, store, sources_config = context.load_context()
-owner = ui.render_sidebar(store)
-st.title("Findings")
+owner = ui.page_header(store, "Findings", icon="fact_check")
 
 if owner is None:
     st.stop()
@@ -92,9 +89,9 @@ all_findings = store.list_findings(None if show_all else owner["OWNER_EMAIL"])
 if not all_findings:
     st.info(
         "No findings yet. They appear after the first run of your active rules — "
-        "run `dq run`, or use **Run checks now** on the Run results page."
+        "run `dq run`, or use **Run checks now** on the Overview page."
     )
-    st.page_link("pages/4_Run_Results.py", label="Go to Run results", icon=":material/monitoring:")
+    st.page_link(ui.PAGE_OVERVIEW, label="Go to Overview", icon=":material/dashboard:")
     st.stop()
 
 summary = finding_ops.summarise(all_findings)
@@ -114,7 +111,7 @@ if summary.expired or summary.expiring_soon:
         parts.append(f"{summary.expired} already lapsed and will reopen at the next run")
     st.warning("⏳ " + "; ".join(parts) + ".")
 st.caption(
-    "Changes here apply straight away. The counts on the Run results page update at the next run."
+    "Changes here apply straight away. The counts on the Overview page update at the next run."
 )
 
 # --- Filters ------------------------------------------------------------------------------

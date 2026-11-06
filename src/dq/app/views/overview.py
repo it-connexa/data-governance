@@ -15,11 +15,8 @@ import streamlit as st
 from dq import narratives, run_ops
 from dq.app import context, ui
 
-st.set_page_config(page_title="Run results", layout="wide")
-
 settings, store, sources_config = context.load_context()
-owner = ui.render_sidebar(store)
-st.title("Run results")
+owner = ui.page_header(store, "Overview", icon="dashboard")
 
 if owner is None:
     st.stop()
@@ -278,7 +275,7 @@ else:
         picked = table_rows[event.selection["rows"][0]]["Rule"]
         if st.button(f"View open findings for {picked}", key=f"results_view_{picked}"):
             st.session_state["_findings_jump_rule"] = picked
-            st.switch_page("pages/3_Findings.py")
+            st.switch_page(ui.PAGE_FINDINGS)
     else:
         st.caption("Tick a rule to jump to its open findings.")
 

@@ -1,8 +1,10 @@
-"""Tests for the pure (non-st.*) helpers in dq.app.ui. render_lifecycle_stepper
-and render_sidebar call st.* directly and are verified by running the app,
-never by pytest -- see the module docstring."""
+"""Tests for the pure (non-st.*) helpers in dq.app.ui. The functions that call
+st.* directly (page header, owner selector, lifecycle strip, layout CSS) are
+verified by running the app and by the AppTest smoke tests, not here."""
 
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from dq.app import ui
 
@@ -20,15 +22,131 @@ def test_select_index_falls_back_to_default_when_none():
     assert ui.select_index(["A", "B", "C"], None, default=1) == 1
 
 
-def test_status_badge_contains_friendly_label_and_color():
-    html = ui.status_badge("READY_FOR_COMPILE")
-    assert "Ready for compile" in html
-    assert ui._STATUS_COLORS["READY_FOR_COMPILE"] in html
+def test_status_badge_is_a_native_colour_badge_with_the_friendly_label():
+    assert ui.status_badge("READY_FOR_COMPILE") == ":violet-badge[Ready for compile]"
+    assert ui.status_badge("ACTIVE") == ":green-badge[Active]"
 
 
 def test_status_badge_falls_back_to_raw_status_for_unknown_value():
-    html = ui.status_badge("SOMETHING_NEW")
-    assert "SOMETHING_NEW" in html
+    assert ui.status_badge("SOMETHING_NEW") == ":gray-badge[SOMETHING_NEW]"
+
+
+def test_every_status_has_a_distinct_label_and_a_valid_badge_colour():
+    valid = {"red", "orange", "yellow", "blue", "green", "violet", "gray", "primary"}
+    labels = [ui.status_label(s) for s in ui.STATUSES]
+    assert len(set(labels)) == len(ui.STATUSES)
+    assert {ui.status_color(s) for s in ui.STATUSES} <= valid
+
+
+def test_status_cell_pairs_a_glyph_with_the_label_for_table_cells():
+    cell = ui.status_cell("ACTIVE")
+    assert cell.endswith("Active")
+    assert cell != "Active"  # has a leading glyph
+    assert ui.status_cell("SOMETHING_NEW").endswith("SOMETHING_NEW")
+
+
+def test_severity_cell_pairs_a_glyph_with_the_title_case_label():
+    assert ui.severity_cell("CRITICAL").endswith("Critical")
+    assert ui.severity_cell("LOW").endswith("Low")
+    assert ui.severity_cell(None) == "—"
+
+
+def test_enum_label_turns_database_values_into_plain_words():
+    assert ui.enum_label("CROSS_DOMAIN") == "Cross domain"
+    assert ui.enum_label("MILESTONE") == "Milestone"
+    assert ui.enum_label("SITE_MASTER") == "Site master"
+    assert ui.enum_label(None) == "—"
+
+
+# --- lifecycle strip, primary and secondary actions ---------------------------------
+
+
+def _states(view):
+    return [step.state for step in view.steps]
+
+
+def test_lifecycle_view_marks_earlier_steps_done_and_later_steps_todo():
+    view = ui.lifecycle_view("COMPILED")
+    assert [s.label for s in view.steps] == ["Draft", "Ready", "Compiled", "Confirmed", "Active"]
+    assert _states(view) == ["done", "done", "current", "todo", "todo"]
+    assert not view.paused and not view.retired
+
+
+def test_lifecycle_view_needs_clarification_is_a_pause_on_draft():
+    view = ui.lifecycle_view("NEEDS_CLARIFICATION")
+    assert _states(view) == ["current", "todo", "todo", "todo", "todo"]
+    assert view.paused
+
+
+def test_lifecycle_view_active_has_every_earlier_step_done():
+    assert _states(ui.lifecycle_view("ACTIVE")) == ["done", "done", "done", "done", "current"]
+
+
+def test_lifecycle_view_retired_is_terminal_not_a_position():
+    view = ui.lifecycle_view("RETIRED")
+    assert view.retired
+    assert set(_states(view)) == {"todo"}
+
+
+def test_primary_action_is_one_button_per_state_for_the_owner():
+    assert ui.primary_action("DRAFT", is_approver=False).key == "submit"
+    assert ui.primary_action("NEEDS_CLARIFICATION", is_approver=False).key == "answer"
+    assert ui.primary_action("COMPILED", is_approver=False).key == "confirm"
+    for status in ("READY_FOR_COMPILE", "OWNER_CONFIRMED", "ACTIVE", "RETIRED"):
+        assert ui.primary_action(status, is_approver=False) is None
+
+
+def test_primary_action_approve_is_for_approvers_only():
+    assert ui.primary_action("OWNER_CONFIRMED", is_approver=True).key == "approve"
+    assert ui.primary_action("OWNER_CONFIRMED", is_approver=False) is None
+
+
+def test_secondary_actions_follow_the_lifecycle_state():
+    assert ui.secondary_actions("DRAFT", is_approver=False) == ["edit", "delete"]
+    assert ui.secondary_actions("COMPILED", is_approver=False) == ["edit", "reject"]
+    assert ui.secondary_actions("COMPILED", is_approver=True) == ["edit", "reject", "retire"]
+    assert ui.secondary_actions("ACTIVE", is_approver=False) == ["edit"]
+    assert ui.secondary_actions("ACTIVE", is_approver=True) == ["edit", "retire"]
+    assert ui.secondary_actions("READY_FOR_COMPILE", is_approver=True) == ["edit"]
+    assert ui.secondary_actions("RETIRED", is_approver=True) == ["edit"]
+
+
+def test_history_event_label_covers_every_change_type_in_the_schema():
+    schema = Path("sql/dq_poc_duckdb_schema.sql").read_text()
+    block = schema[schema.index("CHANGE_TYPE     VARCHAR NOT NULL CHECK") :]
+    block = block[: block.index("STATUS_AFTER")]
+    change_types = re.findall(r"'([A-Z_]+)'", block)
+    assert len(change_types) >= 14
+    for change_type in change_types:
+        assert ui.history_event_label(change_type) != change_type, change_type
+    assert ui.history_event_label("SOMETHING_NEW") == "Something new"
+
+
+# --- rule filter pills ------------------------------------------------------------------
+
+_RULES = [
+    {"RULE_CODE": "A", "STATUS": "DRAFT"},
+    {"RULE_CODE": "B", "STATUS": "NEEDS_CLARIFICATION"},
+    {"RULE_CODE": "C", "STATUS": "READY_FOR_COMPILE"},
+    {"RULE_CODE": "D", "STATUS": "COMPILED"},
+    {"RULE_CODE": "E", "STATUS": "OWNER_CONFIRMED"},
+    {"RULE_CODE": "F", "STATUS": "ACTIVE"},
+    {"RULE_CODE": "G", "STATUS": "ACTIVE"},
+    {"RULE_CODE": "H", "STATUS": "RETIRED"},
+]
+
+
+def test_rule_pill_counts_group_statuses_and_count_flagged_rules():
+    counts = ui.rule_pill_counts(_RULES, flagged_codes={"F", "H"})
+    assert counts == {"Draft": 2, "In progress": 3, "Active": 2, "Retired": 1, "Flagged": 2}
+
+
+def test_rule_in_pill_matches_by_group_or_flag():
+    active_flagged = {"RULE_CODE": "F", "STATUS": "ACTIVE"}
+    assert ui.rule_in_pill(active_flagged, "Active", flagged_codes={"F"})
+    assert ui.rule_in_pill(active_flagged, "Flagged", flagged_codes={"F"})
+    assert not ui.rule_in_pill(active_flagged, "Draft", flagged_codes={"F"})
+    assert not ui.rule_in_pill(active_flagged, "Flagged", flagged_codes=set())
 
 
 def test_next_step_guidance_covers_every_lifecycle_status():
@@ -132,8 +250,44 @@ def test_change_label_shows_direction_and_size():
     assert ui.change_label(None, 4) == "first run"
 
 
-def test_run_status_badge_has_label_and_colour():
-    html = ui.run_status_badge("PARTIAL")
-    assert "Partial" in html
-    assert ui._RUN_STATUS_COLORS["PARTIAL"] in html
-    assert "SOMETHING" in ui.run_status_badge("SOMETHING")
+def test_run_status_badge_is_a_native_colour_badge():
+    assert ui.run_status_badge("PARTIAL") == ":orange-badge[Partial]"
+    assert ui.run_status_badge("SUCCEEDED") == ":green-badge[Succeeded]"
+    assert ui.run_status_badge("SOMETHING") == ":gray-badge[SOMETHING]"
+
+
+# --- acting-as owner survives page changes ---------------------------------------------
+
+
+class _FakeOwners:
+    def list_owners(self):
+        return [
+            {"OWNER_EMAIL": "alice@example.test", "DISPLAY_NAME": "Alice"},
+            {"OWNER_EMAIL": "carol@example.test", "DISPLAY_NAME": "Carol"},
+        ]
+
+
+def test_current_owner_remembers_the_choice_when_the_selector_state_is_dropped():
+    import streamlit as st
+
+    st.session_state.clear()
+    store = _FakeOwners()
+
+    st.session_state["acting_as_widget"] = "carol@example.test"
+    assert ui.current_owner(store)["DISPLAY_NAME"] == "Carol"
+
+    # Changing page drops the widget's own state; the choice must survive.
+    del st.session_state["acting_as_widget"]
+    assert ui.current_owner(store)["DISPLAY_NAME"] == "Carol"
+
+    st.session_state.clear()
+    assert ui.current_owner(store)["DISPLAY_NAME"] == "Alice"  # default: the first owner
+
+
+def test_current_owner_ignores_a_remembered_owner_who_no_longer_exists():
+    import streamlit as st
+
+    st.session_state.clear()
+    st.session_state["acting_as_email"] = "gone@example.test"
+    assert ui.current_owner(_FakeOwners())["DISPLAY_NAME"] == "Alice"
+    st.session_state.clear()
