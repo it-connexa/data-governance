@@ -24,6 +24,7 @@ from dq.lifecycle import (
     compute_finding_id,
     decide,
     decide_retired,
+    record_url_prefix,
 )
 from dq.store.base import ApplyFindingsResult, FindingInput
 
@@ -210,6 +211,19 @@ class DuckDBStore:
                 )
 
             self._resolve_out_of_scope(con, rule_id, evaluated_finding_ids, counts, run_id, run_at)
+
+            # The link is built when a finding is first raised, so a correction to SF_BASE_URL
+            # or the object's API name would otherwise never reach it. Rebuild it for every
+            # finding of the rule, including resolved ones: it is a pure function of the ID.
+            prefix = record_url_prefix(sf_base_url, sf_object)
+            if prefix is None:
+                con.execute("UPDATE DQ_FINDING SET RECORD_URL = NULL WHERE RULE_ID = ?", [rule_id])
+            else:
+                con.execute(
+                    "UPDATE DQ_FINDING SET RECORD_URL = ? || RECORD_ID || '/view' "
+                    "WHERE RULE_ID = ?",
+                    [prefix, rule_id],
+                )
 
         return ApplyFindingsResult(
             inserted=counts.get(Action.INSERT_OPEN, 0),

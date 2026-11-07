@@ -252,3 +252,77 @@ def test_count_findings_by_status_for_one_rule(store_path):
     assert store.count_findings_by_status("SITE-900") == {"OPEN": 1, "FALSE_POSITIVE": 1}
     assert store.count_findings_by_status("SITE-901") == {"OPEN": 1}
     assert store.count_findings_by_status("NOPE-1") == {}
+
+
+# --- stored links are repaired by a later run -------------------------------------------
+
+
+def test_a_later_run_repairs_the_stored_link_of_every_finding_of_the_rule(store_path):
+    store = DuckDBStore(store_path)
+    rule_id = insert_rule(store_path, rule_code="SITE-900")
+    base = "https://connexa.lightning.force.com"
+
+    # First run, with the sources.yml placeholder still in place: no link is stored.
+    store.start_run(RUN_1, "MANUAL", "kevin", T1)
+    store.apply_findings(
+        run_id=RUN_1,
+        run_at=T1,
+        rule_id=rule_id,
+        rule_code="SITE-900",
+        rule_version=1,
+        source_object="SITE",
+        sf_object="<SITE_OBJECT_API_NAME>",
+        sf_base_url=base,
+        rows=[fail("r1"), fail("r2")],
+    )
+    con = duckdb.connect(str(store_path))
+    assert con.execute(
+        "SELECT COUNT(*) FROM DQ_FINDING WHERE RECORD_URL IS NOT NULL"
+    ).fetchone() == (0,)
+    con.close()
+
+    # Second run, config fixed: r1 still fails, r2 has gone (resolved), and both get the link.
+    store.start_run(RUN_2, "MANUAL", "kevin", T2)
+    store.apply_findings(
+        run_id=RUN_2,
+        run_at=T2,
+        rule_id=rule_id,
+        rule_code="SITE-900",
+        rule_version=1,
+        source_object="SITE",
+        sf_object="sitetracker__Site__c",
+        sf_base_url=base + "/",
+        rows=[fail("r1")],
+    )
+    con = duckdb.connect(str(store_path))
+    urls = dict(con.execute("SELECT RECORD_ID, RECORD_URL FROM DQ_FINDING").fetchall())
+    con.close()
+    assert urls == {
+        "r1": f"{base}/lightning/r/sitetracker__Site__c/r1/view",
+        "r2": f"{base}/lightning/r/sitetracker__Site__c/r2/view",
+    }
+
+
+def test_repair_only_touches_the_rule_being_applied(store_path):
+    store = DuckDBStore(store_path)
+    a = insert_rule(store_path, rule_code="SITE-900")
+    b = insert_rule(store_path, rule_code="SITE-901")
+    base = "https://connexa.lightning.force.com"
+    store.start_run(RUN_1, "MANUAL", "kevin", T1)
+    for rule_id, code, obj in [(a, "SITE-900", "Site__c"), (b, "SITE-901", "Other__c")]:
+        store.apply_findings(
+            run_id=RUN_1,
+            run_at=T1,
+            rule_id=rule_id,
+            rule_code=code,
+            rule_version=1,
+            source_object="SITE",
+            sf_object=obj,
+            sf_base_url=base,
+            rows=[fail("r1")],
+        )
+    con = duckdb.connect(str(store_path))
+    urls = dict(con.execute("SELECT RULE_CODE, RECORD_URL FROM DQ_FINDING").fetchall())
+    con.close()
+    assert urls["SITE-900"].endswith("/lightning/r/Site__c/r1/view")
+    assert urls["SITE-901"].endswith("/lightning/r/Other__c/r1/view")

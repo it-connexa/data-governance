@@ -137,9 +137,23 @@ def compute_finding_id(rule_code: str, record_id: str, item_key: str | None) -> 
     return hashlib.sha256(f"{rule_code}|{record_id}|{item_key or ''}".encode()).hexdigest()
 
 
-def build_record_url(sf_base_url: str, sf_object: str, record_id: str) -> str:
-    """RECORD_URL = SF_BASE_URL + '/lightning/r/' + sf_object + '/' + RECORD_ID + '/view'.
+def _is_unset(value: str | None) -> bool:
+    """Empty, or still a setup placeholder such as "<SF_BASE_URL>"."""
+    return not value or not value.strip() or ("<" in value and ">" in value)
 
-    Brief §10.2.
+
+def record_url_prefix(sf_base_url: str | None, sf_object: str | None) -> str | None:
+    """SF_BASE_URL + '/lightning/r/' + sf_object + '/', or None until both parts are set.
+
+    A half-configured link is a broken link, so no link is better than a wrong one.
     """
-    return f"{sf_base_url.rstrip('/')}/lightning/r/{sf_object}/{record_id}/view"
+    if _is_unset(sf_base_url) or _is_unset(sf_object):
+        return None
+    return f"{sf_base_url.rstrip('/')}/lightning/r/{sf_object}/"
+
+
+def build_record_url(sf_base_url: str | None, sf_object: str | None, record_id: str) -> str | None:
+    """RECORD_URL = SF_BASE_URL + '/lightning/r/' + sf_object + '/' + RECORD_ID + '/view'
+    (brief §10.2), or None until SF_BASE_URL and the object's API name are configured."""
+    prefix = record_url_prefix(sf_base_url, sf_object)
+    return None if prefix is None else f"{prefix}{record_id}/view"

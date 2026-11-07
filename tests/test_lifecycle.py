@@ -1,5 +1,7 @@
 import hashlib
 
+import pytest
+
 from dq.lifecycle import (
     Action,
     DispositionType,
@@ -10,6 +12,7 @@ from dq.lifecycle import (
     compute_finding_id,
     decide,
     decide_retired,
+    record_url_prefix,
 )
 
 # --- brief §10.2's table, row by row -----------------------------------------
@@ -166,3 +169,32 @@ def test_build_record_url():
 def test_build_record_url_strips_trailing_slash_on_base():
     url = build_record_url("https://connexa.lightning.force.com/", "Site__c", "a0B123")
     assert url == "https://connexa.lightning.force.com/lightning/r/Site__c/a0B123/view"
+
+
+@pytest.mark.parametrize(
+    "base,sf_object",
+    [
+        ("", "Site__c"),
+        ("   ", "Site__c"),
+        (None, "Site__c"),
+        ("<SF_BASE_URL>", "Site__c"),  # the placeholder the schema file ships with
+        ("https://connexa.lightning.force.com", ""),
+        ("https://connexa.lightning.force.com", None),
+        (
+            "https://connexa.lightning.force.com",
+            "<PROJECT_OBJECT_API_NAME>",
+        ),  # sources.yml placeholder
+    ],
+)
+def test_build_record_url_is_none_until_the_link_is_configured(base, sf_object):
+    # A half-configured link would be a broken one; no link is better than a broken link.
+    assert build_record_url(base, sf_object, "a0B123") is None
+
+
+def test_record_url_prefix_matches_the_full_url():
+    prefix = record_url_prefix("https://connexa.lightning.force.com/", "Site__c")
+    assert prefix == "https://connexa.lightning.force.com/lightning/r/Site__c/"
+    assert prefix + "a0B123" + "/view" == build_record_url(
+        "https://connexa.lightning.force.com", "Site__c", "a0B123"
+    )
+    assert record_url_prefix("<SF_BASE_URL>", "Site__c") is None

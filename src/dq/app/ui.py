@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 import streamlit as st
 
 from dq import finding_ops
+from dq.lifecycle import build_record_url
+from dq.sources import SourcesConfig, resolve_target_source
 from dq.store.base import GovernanceStore
 
 NZ_TZ = ZoneInfo("Pacific/Auckland")
@@ -344,6 +346,18 @@ def _todo(rule: dict, verb: str) -> dict:
         "page": PAGE_RULES,
         "params": {"rule": rule["RULE_CODE"]},
     }
+
+
+def record_url_for(
+    finding: dict, sources_config: SourcesConfig, sf_base_url: str | None
+) -> str | None:
+    """The Salesforce link for a finding's record, built from the current config so a
+    correction shows at once (the stored RECORD_URL only catches up at the next run).
+    None when the link isn't configured."""
+    source = sources_config.sources.get(resolve_target_source(finding["SOURCE_OBJECT"]))
+    if source is None:
+        return None
+    return build_record_url(sf_base_url, source.sf_object, finding["RECORD_ID"])
 
 
 # --- Findings: status pills and the rules a view covers ----------------------------------

@@ -543,7 +543,8 @@ def _render_sql_and_preview(rule: dict) -> None:
     for row in result["sample"]:
         label = row["record_name"] or row["record_id"]
         site = f" — {row['site_name']}" if row["site_name"] else ""
-        st.markdown(f"- [{label}]({row['record_url']}){site} — `{row['detail']}`")
+        linked = f"[{label}]({row['record_url']})" if row["record_url"] else label
+        st.markdown(f"- {linked}{site} — `{row['detail']}`")
 
 
 def _render_history(rule: dict) -> None:

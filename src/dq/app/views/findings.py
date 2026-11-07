@@ -17,6 +17,7 @@ from dq import finding_ops
 from dq.app import context, ui
 
 settings, store, sources_config = context.load_context()
+sf_base_url = context.engine_config(store).sf_base_url
 owner = ui.page_header(store, "Findings", icon="fact_check")
 if owner is None:
     st.stop()
@@ -333,10 +334,15 @@ def _render_why_it_failed(finding: dict) -> None:
 
 def _render_finding_facts(finding: dict) -> None:
     name = finding["RECORD_NAME"] or finding["RECORD_ID"]
-    if finding["RECORD_URL"]:
-        st.markdown(f"##### [{name}]({finding['RECORD_URL']})")
+    url = ui.record_url_for(finding, sources_config, sf_base_url)
+    if url:
+        st.markdown(f"##### [{name}]({url})")
     else:
         st.markdown(f"##### {name}")
+        st.caption(
+            "No Salesforce link yet: set `SF_BASE_URL` in DQ_CONFIG and the object's "
+            "`sf_object` in sources.yml."
+        )
     where = " · ".join(part for part in (finding["SITE_NAME"], finding["ITEM_KEY"]) if part)
     st.caption(
         f"{where + ' · ' if where else ''}{ui.finding_status_label(finding)} · "

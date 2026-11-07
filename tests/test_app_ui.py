@@ -476,3 +476,36 @@ def test_overview_totals_have_no_previous_for_a_first_run_and_treat_null_as_zero
         "critical_open": 0,
     }
     assert ui.overview_totals([], {}) == {"open": 0, "previous_open": None, "critical_open": 0}
+
+
+# --- the Salesforce link on a finding -----------------------------------------------------
+
+
+def test_record_url_for_uses_the_current_config_and_the_rules_source_object(fixtures_dir):
+    from dq.sources import load_sources
+
+    config = load_sources(fixtures_dir / "sources_test.yml")
+    base = "https://connexa.lightning.force.com"
+    site = {"SOURCE_OBJECT": "SITE", "RECORD_ID": "s1"}
+    project = {"SOURCE_OBJECT": "PROJECT", "RECORD_ID": "p1"}
+    milestone = {
+        "SOURCE_OBJECT": "MILESTONE",
+        "RECORD_ID": "p2",
+    }  # a milestone's record is a project
+
+    assert ui.record_url_for(site, config, base) == f"{base}/lightning/r/Site__c/s1/view"
+    assert ui.record_url_for(project, config, base) == f"{base}/lightning/r/Project__c/p1/view"
+    assert ui.record_url_for(milestone, config, base) == f"{base}/lightning/r/Project__c/p2/view"
+
+
+def test_record_url_for_is_none_when_not_configured_or_the_source_is_unknown(fixtures_dir):
+    from dq.sources import load_sources
+
+    config = load_sources(fixtures_dir / "sources_test.yml")
+    site = {"SOURCE_OBJECT": "SITE", "RECORD_ID": "s1"}
+
+    assert ui.record_url_for(site, config, "") is None
+    assert ui.record_url_for(site, config, "<SF_BASE_URL>") is None
+    assert (
+        ui.record_url_for({"SOURCE_OBJECT": "NOPE", "RECORD_ID": "x"}, config, "https://x") is None
+    )
