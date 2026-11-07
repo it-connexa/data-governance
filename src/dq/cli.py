@@ -137,6 +137,36 @@ def catalogue_sources() -> None:
 # --- dq rule ---------------------------------------------------------------------
 
 
+@rule_app.command("renumber")
+def rule_renumber(
+    pairs: Annotated[
+        list[str],
+        typer.Option("--map", help="OLD:NEW, repeated for each rule. E.g. --map SITE-003:SITE-001"),
+    ],
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Check and count what would move; write nothing")
+    ] = False,
+) -> None:
+    """Change rule codes, moving each rule's history, run results, findings and exceptions
+    with it. Writes the governance store, so it is developer-only: take a backup, run with
+    --dry-run first. Prints counts only, never rows."""
+    mapping: dict[str, str] = {}
+    for pair in pairs:
+        old, sep, new = pair.partition(":")
+        if not sep or not old.strip() or not new.strip():
+            _fail(f"'{pair}' is not OLD:NEW (for example SITE-003:SITE-001)")
+        if old.strip() in mapping:
+            _fail(f"{old.strip()} appears more than once in --map")
+        mapping[old.strip()] = new.strip()
+
+    store, _ = _load_store_and_sources()
+    try:
+        result = rule_ops.renumber_rules(store, mapping, dry_run=dry_run)
+    except rule_ops.RuleOpsError as exc:
+        _fail(str(exc))
+    _print_json(result)
+
+
 @rule_app.command("list")
 def rule_list(status: Annotated[str | None, typer.Option("--status")] = None) -> None:
     store, _ = _load_store_and_sources()

@@ -220,6 +220,63 @@ def test_catalogue_sources_prints_registry_without_snowflake():
     assert set(rows["SITE"]) >= {"description", "grain", "not_for", "freshness_column"}
 
 
+# --- dq rule renumber (writes the store, so developer-only) -----------------------------
+
+
+def _codes(store_path):
+    con = duckdb.connect(str(store_path))
+    try:
+        return {r[0] for r in con.execute("SELECT RULE_CODE FROM DQ_RULE").fetchall()}
+    finally:
+        con.close()
+
+
+def test_rule_renumber_dry_run_reports_counts_and_changes_nothing(store_path):
+    insert_rule(store_path, rule_code="SITE-950")
+
+    result = runner.invoke(cli.app, ["rule", "renumber", "--map", "SITE-950:SITE-951", "--dry-run"])
+
+    assert result.exit_code == 0
+    body = json.loads(result.output)
+    assert body["dry_run"] is True
+    assert body["renumbered"][0]["from"] == "SITE-950" and body["renumbered"][0]["to"] == "SITE-951"
+    assert "SITE-950" in _codes(store_path) and "SITE-951" not in _codes(store_path)
+
+
+def test_rule_renumber_applies_a_chain_of_pairs(store_path):
+    insert_rule(store_path, rule_code="SITE-950")
+    insert_rule(store_path, rule_code="SITE-952")
+
+    result = runner.invoke(
+        cli.app,
+        ["rule", "renumber", "--map", "SITE-950:SITE-951", "--map", "SITE-952:SITE-950"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["dry_run"] is False
+    assert {"SITE-950", "SITE-951"} <= _codes(store_path) and "SITE-952" not in _codes(store_path)
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["--map", "nonsense"], "OLD:NEW"),
+        (["--map", "SITE-950:SITE-951", "--map", "SITE-950:SITE-952"], "more than once"),
+        (["--map", "SITE-999:SITE-951"], "Unknown rule"),
+    ],
+)
+def test_rule_renumber_refuses_bad_requests_with_a_clear_error(store_path, args, message):
+    insert_rule(store_path, rule_code="SITE-950")
+
+    result = runner.invoke(cli.app, ["rule", "renumber", *args])
+
+    assert result.exit_code == 1
+    assert message in json.loads(result.output)["error"]
+    assert _codes(store_path) == {r for r in _codes(store_path)} and "SITE-950" in _codes(
+        store_path
+    )
+
+
 # --- dq validate / dq rule set-sql (need a fake Snowflake executor) -----------
 
 

@@ -832,6 +832,81 @@ class DuckDBStore:
             con.execute("DELETE FROM DQ_RULE_HISTORY WHERE RULE_CODE = ?", [rule_code])
             con.execute("DELETE FROM DQ_RULE WHERE RULE_CODE = ?", [rule_code])
 
+    def get_rule_footprint(self, rule_code: str) -> dict[str, int]:
+        with self._connect() as con:
+
+            def count(sql: str) -> int:
+                return con.execute(sql, [rule_code]).fetchone()[0]
+
+            return {
+                "findings": count("SELECT COUNT(*) FROM DQ_FINDING WHERE RULE_CODE = ?"),
+                "dispositions": count(
+                    "SELECT COUNT(*) FROM DQ_FINDING_DISPOSITION WHERE FINDING_ID IN "
+                    "(SELECT FINDING_ID FROM DQ_FINDING WHERE RULE_CODE = ?)"
+                ),
+                "run_results": count("SELECT COUNT(*) FROM DQ_RULE_RESULT WHERE RULE_CODE = ?"),
+                "history": count("SELECT COUNT(*) FROM DQ_RULE_HISTORY WHERE RULE_CODE = ?"),
+            }
+
+    def renumber_rules(self, mapping: dict[str, str]) -> None:
+        con = self._connect()
+        try:
+            con.begin()
+            # DQ_RULE.RULE_CODE is unique, and a request can reuse a code another rule is
+            # giving up (003 -> 001, then 007 -> 003), so park every rule on a temporary code
+            # first. Everything else is keyed by RULE_ID, so no row is rewritten twice.
+            rule_ids: dict[str, int] = {}
+            for index, old in enumerate(mapping):
+                row = con.execute(
+                    "SELECT RULE_ID FROM DQ_RULE WHERE RULE_CODE = ?", [old]
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Unknown rule code: {old}")
+                rule_ids[old] = row[0]
+                con.execute(
+                    "UPDATE DQ_RULE SET RULE_CODE = ? WHERE RULE_ID = ?",
+                    [f"__RENUMBER_{index}__", row[0]],
+                )
+            for old, new in mapping.items():
+                rule_id = rule_ids[old]
+                check_sql = con.execute(
+                    "SELECT CHECK_SQL FROM DQ_RULE WHERE RULE_ID = ?", [rule_id]
+                ).fetchone()[0]
+                header = f"-- {old} "
+                if check_sql and check_sql.startswith(header):
+                    # The stored SQL's first comment names the rule; keep it in step with the file.
+                    check_sql = f"-- {new} " + check_sql[len(header) :]
+                con.execute(
+                    "UPDATE DQ_RULE SET RULE_CODE = ?, CHECK_SQL = ? WHERE RULE_ID = ?",
+                    [new, check_sql, rule_id],
+                )
+                for table in ("DQ_RULE_HISTORY", "DQ_RULE_RESULT"):
+                    con.execute(
+                        f"UPDATE {table} SET RULE_CODE = ? WHERE RULE_ID = ?", [new, rule_id]
+                    )
+                # A finding's ID is a hash that includes the rule code, so it changes with it.
+                # Dispositions follow their finding, so exceptions and false positives survive.
+                findings = con.execute(
+                    "SELECT FINDING_ID, RECORD_ID, ITEM_KEY FROM DQ_FINDING WHERE RULE_ID = ?",
+                    [rule_id],
+                ).fetchall()
+                for old_id, record_id, item_key in findings:
+                    new_id = compute_finding_id(new, record_id, item_key)
+                    con.execute(
+                        "UPDATE DQ_FINDING SET FINDING_ID = ?, RULE_CODE = ? WHERE FINDING_ID = ?",
+                        [new_id, new, old_id],
+                    )
+                    con.execute(
+                        "UPDATE DQ_FINDING_DISPOSITION SET FINDING_ID = ? WHERE FINDING_ID = ?",
+                        [new_id, old_id],
+                    )
+            con.commit()
+        except BaseException:
+            con.rollback()
+            raise
+        finally:
+            con.close()
+
     def get_owner(self, owner_email: str) -> dict[str, Any] | None:
         with self._connect() as con:
             cur = con.execute("SELECT * FROM DQ_OWNER WHERE OWNER_EMAIL = ?", [owner_email])

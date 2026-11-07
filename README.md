@@ -38,6 +38,7 @@ uv run dq validate SITE-001 --file rules/sql/SITE-001.sql       # dry run: count
 uv run dq rule set-sql SITE-001 --file rules/sql/SITE-001.sql   # lint, validate, compile
 uv run dq rule confirm SITE-001 --as <owner email>
 uv run dq rule approve SITE-001 --as <approver email>
+uv run dq rule renumber --map SITE-003:SITE-001 --dry-run   # change rule codes, moving findings and history (back up first)
 uv run dq run --manual               # weekly run; add --narratives to also write Cortex narratives
 ```
 

@@ -11,6 +11,7 @@ owner themselves, never called by Claude Code.
 from __future__ import annotations
 
 import dataclasses
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -294,6 +295,55 @@ def delete_rule(store: GovernanceStore, rule_code: str) -> None:
     if store.has_rule_run_history(rule_code):
         raise RuleOpsError(f"{rule_code} has real run history -- retire it instead of deleting")
     store.delete_rule(rule_code)
+
+
+_RULE_CODE_RE = re.compile(r"^([A-Z]{2,5})-\d{3,}$")
+
+
+def renumber_rules(
+    store: GovernanceStore, mapping: dict[str, str], *, dry_run: bool = False
+) -> dict[str, Any]:
+    """dq rule renumber: change rule codes (old -> new), moving each rule's history, run
+    results, findings and exceptions with it. A code may be one another rule in the same
+    request is giving up, so a chain (003 -> 001, then 007 -> 003) works. Everything is
+    checked first and applied in one transaction, so a refusal or failure changes nothing.
+    With dry_run, reports what would move and writes nothing. Counts only, never rows."""
+    if not mapping:
+        raise RuleOpsError("There is nothing to renumber: give at least one OLD:NEW pair")
+
+    existing = {r["RULE_CODE"]: r for r in store.list_rules()}
+    targets: set[str] = set()
+    for old, new in mapping.items():
+        if old not in existing:
+            raise RuleOpsError(f"Unknown rule code: {old}")
+        for code in (old, new):
+            if not _RULE_CODE_RE.match(code):
+                raise RuleOpsError(f"'{code}' is not a valid rule code (expected e.g. SITE-001)")
+        if old == new:
+            raise RuleOpsError(f"{old} already has that code")
+        old_prefix = old.split("-")[0]
+        if new.split("-")[0] != old_prefix:
+            raise RuleOpsError(f"{new} must have the same prefix as {old} ({old_prefix}-)")
+        if new in targets:
+            raise RuleOpsError(f"Can't renumber: more than one rule would become {new}")
+        targets.add(new)
+        if new in existing and new not in mapping:
+            raise RuleOpsError(
+                f"{new} already exists. Delete or renumber it first, or include it in this request"
+            )
+
+    renumbered = [
+        {
+            "from": old,
+            "to": new,
+            "rule_name": existing[old]["RULE_NAME"],
+            **store.get_rule_footprint(old),
+        }
+        for old, new in mapping.items()
+    ]
+    if not dry_run:
+        store.renumber_rules(mapping)
+    return {"dry_run": dry_run, "renumbered": renumbered}
 
 
 # --- Streamlit page 1: Rule Catalogue (view, edit, add) -----------------------------

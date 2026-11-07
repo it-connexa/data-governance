@@ -229,6 +229,18 @@ class GovernanceStore(Protocol):
 
     def delete_rule(self, rule_code: str) -> None: ...
 
+    def get_rule_footprint(self, rule_code: str) -> dict[str, int]:
+        """How much is recorded against a rule: findings, dispositions on them,
+        run results and history rows. Counts only."""
+        ...
+
+    def renumber_rules(self, mapping: dict[str, str]) -> None:
+        """Change rule codes (old -> new) everywhere they are recorded, in one
+        transaction: the rule, its history, run results and findings, recomputing each
+        finding's ID (a hash that includes the code) and moving its dispositions with
+        it. Validation of the request lives in rule_ops."""
+        ...
+
     # --- findings, dispositions and reporting reads (brief §10.6 pages 4-5) ---
 
     def list_findings(self, owner_email: str | None = None) -> list[dict[str, Any]]: ...
