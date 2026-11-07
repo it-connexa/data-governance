@@ -12,6 +12,12 @@
 # On migration to Snowflake, each entry becomes a real DQ_SRC view.
 # Fill in <PLACEHOLDERS> during setup step 1.
 #
+# sf_object:    the Salesforce API name of the object (Object Manager), used only to build
+#               the "open in Salesforce" link: <SF_BASE_URL>/lightning/r/<sf_object>/<id>/view.
+#               If it, or SF_BASE_URL in DQ_CONFIG, is unset or still a <PLACEHOLDER>, no link
+#               is built. These are Sitetracker's managed-package objects, so they carry the
+#               sitetracker__ namespace; confirm against Object Manager if a link 404s.
+#
 # record_label: plural noun used in headline totals
 #               ("of 1,546 sites, 45 exceptions").
 #
@@ -41,7 +47,7 @@ sources:
 
   SITE:
     table: SITETRACKER_SITE_C
-    sf_object: <SITE_OBJECT_API_NAME>        # for record deep links
+    sf_object: sitetracker__Site__c          # Salesforce API name, for record deep links
     record_label: sites
     description: Sitetracker site master (one row per cell site)
     columns: ["*"]                           # replace with explicit list once confirmed
@@ -49,7 +55,7 @@ sources:
 
   PROJECT:
     table: SITETRACKER_PROJECT_C
-    sf_object: <PROJECT_OBJECT_API_NAME>
+    sf_object: sitetracker__Project__c
     record_label: projects
     description: Sitetracker projects (build, upgrade, decommission etc.); links to site and template
     columns: ["*"]
@@ -77,7 +83,7 @@ sources:
     database: PROD
     schema: REPORTING
     table: RPT_PROJECT_UNPIVOT_MILESTONES
-    sf_object: <MILESTONE_OBJECT_API_NAME>
+    sf_object: sitetracker__Project__c         # a milestone rule's record is a project
     record_label: projects                   # a milestone rule's record is a project
     item_label: milestones
     description: >
@@ -104,7 +110,7 @@ sources:
     database: PROD
     schema: REPORTING
     table: RPT_WIP_PROJECT_DETAIL
-    sf_object: <PROJECT_OBJECT_API_NAME>
+    sf_object: sitetracker__Project__c
     record_label: projects
     description: >
       Reporting-layer projects, filtered to the projects the business reports on
@@ -124,7 +130,7 @@ sources:
 
   PROJECT_TEMPLATE:
     table: SITETRACKER_PROJECT_TEMPLATE_C
-    sf_object: <PROJECT_TEMPLATE_OBJECT_API_NAME>
+    sf_object: sitetracker__Project_Template__c
     record_label: templates
     description: Project templates; rules join on template name to scope milestone checks
     columns: ["*"]
