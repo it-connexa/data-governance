@@ -1,4 +1,4 @@
--- SITE-008 v1: When a new site is created it is sometimes given a temporary
+-- SITE-002 v1: When a new site is created it is sometimes given a temporary
 -- site ID, but it cannot stay as a temporary site ID indefinitely. Call out
 -- any exceptions where site ID hasn't been finalised one week after the
 -- site record is created.
